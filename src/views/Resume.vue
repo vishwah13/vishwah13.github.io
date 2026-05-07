@@ -9,7 +9,7 @@ const baseUrl = import.meta.env.BASE_URL
     <div class="resume-header">
       <div class="resume-intro">
         <p>
-         Professional developer with a Master’s in Computer Game Engineering (Distinction) from Newcastle University. Proficient in C++ and C#, with expertise in graphics programming, performance optimization, and graphics engine development. Experienced in Unreal and Unity engines, with a strong background in developing computer graphics, Virtual Reality (VR), and Augmented Reality (AR) applications. Skilled in building scalable systems, debugging performance bottlenecks, and collaborating with cross-functional teams to deliver high-quality interactive experiences.
+         Graphics and game engine programmer with a Master’s in Computer Game Engineering (Distinction) from Newcastle University. Proficient in modern C++, HLSL, and Slang with hands-on experience in Vulkan, GPU-driven rendering, PBR, and shader development. Built a 3D Gaussian Splatting renderer and shipped VR/XR experiences on Meta Quest 3 hardware. Skilled in building scalable systems, debugging performance bottlenecks, and collaborating with cross-functional teams to deliver high-quality interactive experiences.
         </p>
 
         <a class="download-link" :href="`${baseUrl}d/Vishwah_Sivagurunathan.pdf`" target="_blank">
