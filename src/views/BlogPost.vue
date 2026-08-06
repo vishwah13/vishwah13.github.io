@@ -11,9 +11,61 @@ const post = computed(() => {
   return blogPosts.find(p => p.slug === route.params.slug)
 })
 
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+}
+
+/**
+ * Adds ids to h2/h3 after rendering. Done on the HTML rather than through a marked
+ * renderer override so it stays independent of marked's renderer API.
+ */
+function addHeadingIds(html: string): string {
+  return html.replace(
+    /<h([23])(\s[^>]*)?>([\s\S]*?)<\/h\1>/g,
+    (_match, level: string, attrs: string | undefined, inner: string) => {
+      const text = inner.replace(/<[^>]+>/g, '')
+      return `<h${level}${attrs ?? ''} id="${slugify(text)}">${inner}</h${level}>`
+    }
+  )
+}
+
 const htmlContent = computed(() => {
   if (!post.value) return ''
-  return marked(post.value.content)
+  return addHeadingIds(marked(post.value.content) as string)
+})
+
+interface TocEntry {
+  id: string
+  text: string
+}
+
+const toc = computed<TocEntry[]>(() => {
+  if (!post.value) return []
+  const entries: TocEntry[] = []
+  const heading = /^##\s+(.+)$/gm
+  let match: RegExpExecArray | null
+  let inFence = false
+
+  for (const line of post.value.content.split(/\r?\n/)) {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+
+    heading.lastIndex = 0
+    match = heading.exec(line)
+    if (match) {
+      const text = match[1].trim()
+      entries.push({ id: slugify(text), text })
+    }
+  }
+
+  return entries
 })
 
 function formatDate(dateStr: string): string {
@@ -48,6 +100,15 @@ function goBack() {
         </div>
       </header>
 
+      <nav v-if="toc.length > 1" class="post-toc" aria-label="Table of contents">
+        <p class="toc-title">Contents</p>
+        <ol class="toc-list">
+          <li v-for="entry in toc" :key="entry.id">
+            <a :href="`#${entry.id}`">{{ entry.text }}</a>
+          </li>
+        </ol>
+      </nav>
+
       <article class="post-body" v-html="htmlContent"></article>
     </div>
 
@@ -80,7 +141,44 @@ function goBack() {
 }
 
 .post-content {
-  max-width: 800px;
+  max-width: 1080px;
+}
+
+.post-toc {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  margin-bottom: var(--spacing-2xl);
+}
+
+.toc-title {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: var(--spacing-md);
+}
+
+.toc-list {
+  margin: 0;
+  padding-left: var(--spacing-xl);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.toc-list li {
+  margin-bottom: var(--spacing-xs);
+}
+
+.toc-list a {
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.toc-list a:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
 }
 
 .post-header {
@@ -185,6 +283,82 @@ function goBack() {
   background: none;
   padding: 0;
   color: var(--color-text-primary);
+}
+
+/* Images: without these, frame captures overflow the column entirely. */
+.post-body :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto var(--spacing-sm);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+/* marked renders `![alt](src)` followed by an *italic* line as <p><img></p><p><em>. */
+.post-body :deep(p > img + em),
+.post-body :deep(p > em:only-child) {
+  display: block;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  margin-bottom: var(--spacing-xl);
+}
+
+.post-body :deep(figure) {
+  margin: 0 0 var(--spacing-xl);
+}
+
+.post-body :deep(figcaption) {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.post-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--spacing-xl);
+  font-size: var(--font-size-sm);
+  display: block;
+  overflow-x: auto;
+}
+
+.post-body :deep(th),
+.post-body :deep(td) {
+  border: 1px solid var(--glass-border);
+  padding: var(--spacing-sm) var(--spacing-md);
+  text-align: left;
+  vertical-align: top;
+}
+
+.post-body :deep(th) {
+  background: var(--glass-bg);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.post-body :deep(blockquote) {
+  border-left: 3px solid var(--color-accent);
+  background: var(--glass-bg);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin: 0 0 var(--spacing-lg);
+  color: var(--color-text-muted);
+}
+
+.post-body :deep(blockquote p:last-child) {
+  margin-bottom: 0;
+}
+
+.post-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--glass-border);
+  margin: var(--spacing-2xl) 0;
 }
 
 .post-body :deep(a) {
