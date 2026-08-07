@@ -128,11 +128,33 @@ very large atlas, immediately before the HUD pass.
 
 > TODO: not yet investigated.
 
-## 5. Depth-stencil clear pass — EID 361–379
+## 5. Fill Stencil pass — EID 361–379
 
-**Status: TODO**
+**Status: VERIFIED**
 
-> TODO: not yet investigated.
+Five draws, one triangle each, into a depth-stencil target. Every one of them uses the
+same stencil configuration:
+
+```
+function      = AlwaysTrue
+passOperation = Replace
+```
+
+What varies is the reference value and write mask:
+
+| EID | reference | writeMask |
+|---|---|---|
+| 367 | 1 | 255 |
+| 370 | 2 | 2 |
+| 373 | 4 | 4 |
+| 376 | 8 | 8 |
+| 379 | 16 | 16 |
+
+`1, 2, 4, 8, 16` — one fullscreen draw per stencil bit. The first clears the byte and
+sets bit 0; the next four OR in a single bit each.
+
+This is the setup pass for BG3's **opaque object fading** system, and it is the more
+interesting of the two ways Larian implemented it. See the dedicated section below.
 
 ## 6. Z-prepass — EID 382–2339
 
@@ -266,10 +288,15 @@ The first fully lit image of the frame appears here.
 
 **Status: PARTIAL**
 
-Three dispatches, the last of which reads a texture and writes two storage buffers —
-the shape of a luminance histogram reduction for auto-exposure. Then a chain of
-single-draw fullscreen passes through the half-resolution targets, ending in a graded
-image.
+Three dispatches here, and they are not all post-processing:
+
+- **12566** — the **fade blending pass**, identified above. Not exposure or bloom.
+- **12572** — reads a texture, writes a storage buffer and a texture. Unidentified.
+- **12576** — reads a texture and writes two storage buffers, the shape of a luminance
+  histogram reduction for auto-exposure.
+
+Then a chain of single-draw fullscreen passes through the half-resolution targets, ending
+in a graded image.
 
 ![The post-processing chain](/img/blog/bg3/17-post-chain.png)
 *Render targets sampled across the back half of the frame.*
@@ -303,6 +330,94 @@ Twelve quad draws into the 8192² target from section 3.
 **Status: TODO**
 
 > TODO: not yet investigated.
+
+## Feature study: fading opaque objects without visible dithering
+
+**Status: VERIFIED (capture) / ATTRIBUTED (technique from Larian's GPC talk)**
+
+Two of the passes above only make sense together, and they implement one of the nicer
+ideas in this renderer.
+
+BG3 constantly has to fade opaque geometry: rooftops and walls vanish as you walk behind
+them, an entire floor disappears when you enter a building, characters fade in the
+selection UI. The standard solution is a dither/dissolve pattern with a `clip`/`discard`
+in the pixel shader — which has two costs Larian called out in their
+[GPC 2024 talk](https://www.youtube.com/watch?v=zuDjcoabX7U): it **disables early Z** for
+every material that might fade, and you can **see the dither pattern**.
+
+Their answer is to move the dither into the **stencil buffer**, so no pixel shader
+modification is needed at all — only a depth-stencil state swap on the fading object.
+
+### The Fill Stencil pass (EID 361–379)
+
+A 4×4 Bayer ordered-dither pattern is written into the low stencil bits, then the object's
+opacity is compared against it with `function = GREATER` and a read mask over those bits.
+Same visual result as a dithered discard, but the pixel shader is untouched and early Z
+survives.
+
+Larian's slide notes they use `SV_StencilRef` where the hardware supports it, and fall
+back to **"separate draw per bit"** otherwise. **This capture is running the fallback** —
+that's exactly what the five draws at reference `1, 2, 4, 8, 16` are.
+
+And the capture explains *why*. Writing an arbitrary stencil reference from a shader on
+Vulkan requires **`VK_EXT_shader_stencil_export`**, and that extension is **not among the
+17 this build enables**. On the Vulkan backend the fast path simply isn't available, so
+the fallback is forced. Four bits of Bayer pattern plus bit 4 — the talk's 1-indexed
+"bit 5", value 16 — is five draws.
+
+### Hiding the pattern (EID 12566)
+
+The clever part. To avoid the dither being *visible*, Larian took inspiration from
+**"Inferred Lighting: Fast dynamic lighting and shadows for opaque and translucent
+objects"** [Kircher09], which uses a discontinuity-sensitive filter to reconstruct
+lighting from a lower-resolution buffer, and reuses the same filter data to reconstruct
+stippled transparency.
+
+So the fill pass also sets bit 4 to 1 and leaves bit 5 at 0. After fading objects render,
+those two bits carry the information a reconstruction filter needs: an **inverse mask** of
+where fading objects were drawn, and the **stipple pattern** of which of their pixels
+passed. The mask is inverted for a specific reason — there is no "set to one" stencil
+operation to increment or decrement against, so they zero instead, which lets multiple
+fading objects overlap correctly.
+
+A **fade blending compute pass** then reconstructs the image during post-processing. In
+this capture that is the dispatch at EID 12566, and its signature matches the described
+technique exactly:
+
+```
+ExecutionMode LocalSize(16, 16, 1)                <- 16x16 screen tile
+Image<float, 2D>*        set 1, binding 0         <- the lit scene
+Image<uint,  2D>*        set 1, binding 1         <- the stencil buffer
+StorageImage<float, 2D>* set 1, binding 2         <- output
+```
+
+An integer texture bound alongside a colour texture is the tell — that is the stencil
+being read as data. Inside, the shader caches both into groupshared arrays with a halo,
+then runs a bounded 4-wide loop:
+
+```
+uint2 _86  = _85 * {16, 16}          <- tile origin
+uint4 _107 = ImageFetch(...)         <- stencil sample
+float4 _111 = ImageFetch(...)        <- colour sample
+bool _165 = _163 < 4; if(!_165) break;    <- the 4x4 neighbourhood walk
+```
+
+Per Larian, it checks a 4×4 stencil neighbourhood to decide whether to blend and to derive
+opacity from the ratio of set bits, then samples a 3×3 colour neighbourhood — deliberately
+smaller, to avoid shifting the image — collecting foreground and background pixels and
+expanding to 4×4 only if it finds none. Foreground pixels blend toward the average
+background and vice versa.
+
+The result is a fade that costs no early-Z, needs no per-material shader work, supports
+overlapping fading objects, and has no visible dither pattern. The blend is genuinely low
+resolution while an object is near-transparent — few pixels pass the stencil test — but
+the fade moves fast enough that it isn't noticeable.
+
+This is also a good illustration of why frame captures and developer talks are worth
+reading together. The capture alone shows five odd fullscreen draws with escalating
+stencil references and an unexplained compute dispatch. The talk alone doesn't tell you
+which path ships on Vulkan. Together they explain both the technique and why this backend
+takes the slower route.
 
 ## Cross-cutting: a DirectX 11 renderer speaking Vulkan
 

@@ -29,7 +29,7 @@ analysis. Every claim in the post should be traceable to a row here.
 | 2 | Shadow map #1 | 148–330 | PARTIAL | `rdc snapshot 200` → depth 2048×2048. Light source unidentified | — |
 | 3 | 8192² atlas | 333–340 | INFERRED | `rdc stats` → `vkCmdBeginRenderPass(Load)` 13 draws, 109 tris, RT 8192×8192 | — |
 | 4 | Early compute | 347–356 | TODO | — | — |
-| 5 | DS=Clear | 361–379 | TODO | — | — |
+| 5 | **Fill Stencil (object fading)** | 361–379 | **VERIFIED** | `rdc pipeline 364/368/371/374/377 stencil` → all func AlwaysTrue, pass op Replace; refs 1/2/4/8/16 with matching writeMasks = one draw per bit. Matches GPC talk's documented "separate draw per bit" fallback | — |
 | 6 | Z-prepass | 382–2339 | VERIFIED | `rdc snapshot 2000` → depth 2560×1440, no colour target; `rdc draws --pass` shows tri counts 94120/42014/21005 matching §7 | — |
 | 7 | G-buffer | 2344–4351 | PARTIAL | `rdc rt 4351 --target 0..4` all 2560×1440; `rdc stats` → 6 attachments; shader_ps.txt `Output Location(0..4)`; `rdc pick-pixel` → MRT0 B=0/A=1, MRT3 all-zero. **MRT2/MRT4 unresolved** | `07-gbuffer-sheet`, `07-gbuffer-mrt0-normals`, `07-gbuffer-mrt1-albedo` |
 | 8 | Decals | 4387–4531 | INFERRED | `rdc rt 4531` still shows normals | — |
@@ -41,7 +41,8 @@ analysis. Every claim in the post should be traceable to a row here.
 | 14 | Lighting + indirect VFX | 11998–12119 | PARTIAL | `rdc events --type Dispatch` → 7 direct + 14 `DispatchIndirect` (55098/1222/690/511/42/31/6, six zero). Individual dispatches unidentified | — |
 | 15 | Lighting composite | 12126–12144 | INFERRED | `rdc rt 12144` first lit image | — |
 | 16 | Transparents / VFX | 12168–12550 | INFERRED | `rdc rt 12550` fire/embers present | — |
-| 17 | Exposure/bloom/tonemap | 12566–12702 | PARTIAL | `rdc bindings 12576` → 1 RO texture + 2 RW SSBOs (histogram shape). Bloom/tonemap split unconfirmed | `17-post-chain` |
+| 17a | **Fade blending compute** | 12566 | **VERIFIED** | `rdc snapshot 12566` → `LocalSize(16,16,1)`; set1 b0 `Image<float,2D>` (lit scene), b1 `Image<uint,2D>` (stencil), b2 `StorageImage<float,2D>` (out). Body: 16×16 tile origin, groupshared uint + float4 caches with +16 halo, bounded `< 4` neighbourhood loop. Matches GPC "Fade Blending pass: compute during post processing, input lit scene + stencil, 4×4 neighbourhood" | — |
+| 17b | Exposure/bloom/tonemap | 12572–12702 | PARTIAL | `rdc bindings 12576` → 1 RO texture + 2 RW SSBOs (histogram shape). 12572 unidentified. Bloom/tonemap split unconfirmed | `17-post-chain` |
 | 18 | Late compute | 12709 | TODO | `rdc bindings 12709` → mixed ps+cs, 2 RO + 1 RW | — |
 | 19 | UI atlas | 12835–12916 | INFERRED | Same 8192² target as §3, 12 quad draws | — |
 | 20 | HUD | 12921–13412 | INFERRED | 109 draws, `rdc rt 13412` shows HUD | — |
@@ -99,11 +100,42 @@ This is the strongest candidate for the post's central argument: **BG3's Vulkan 
 is a DirectX 11-shaped renderer speaking Vulkan.** Note that the thesis is *ours* — it is
 an interpretation built on top of both evidence classes, not something Larian stated.
 
-### Next action on sources
+### Talk content reviewed so far
 
-Watch the talk. It is 100% likely to confirm or contradict specific capture findings
-(cascade setup, the 8192² atlas, the indirect VFX dispatches). Until then no claim about
-its *contents* may enter the post — only its abstract, which has been read directly.
+Screenshots and a transcript excerpt covering the **fading opaque objects** segment
+(~34:30–38:30) are in `C:\Dev\Graphics Study\Baldur's gate 3\RenderDoc\youtube Sources\`.
+That section is now VERIFIED against the capture — see §5 and §17a. Everything else in
+the talk remains unreviewed.
+
+**This paid off far better than any RenderDoc-only session.** The talk turned one TODO
+pass and one misfiled dispatch into two positively identified passes, and produced an
+original synthesis neither source contains alone (see below). Prioritise reviewing more of
+the talk over further blind capture spelunking.
+
+Segments still to review, mapped to open questions:
+
+| Talk segment | Would likely resolve |
+|---|---|
+| "our surfaces" (follows fading, ~38:30) | §10 two-attachment pass, §16 transparents |
+| Cloud rendering | §11 half-res chain |
+| Shading & lighting pipeline | §7 MRT2/MRT4 semantics, §14 lighting dispatches |
+| Cinematics system | §2 shadow map #1, the 48 skinning dispatches |
+
+### Original synthesis: why Vulkan takes the slow path on stencil fill
+
+Neither source states this; it comes from combining them.
+
+Larian's slide says they use `SV_StencilRef` "when supported by HW", with a fallback of one
+draw per bit. The capture shows the **fallback** running (5 draws, refs 1/2/4/8/16).
+Writing an arbitrary stencil reference from a shader on Vulkan requires
+**`VK_EXT_shader_stencil_export`**, and that extension is **absent from the 17 enabled
+device extensions** verified earlier. So the fast path is unavailable on this backend and
+the fallback is forced — five extra fullscreen draws every frame, whether or not anything
+is currently fading.
+
+Worth re-checking against a DX11 capture if one is ever taken: D3D11 has no
+`SV_StencilRef` either (it arrived in D3D11.3/12), so both shipped backends may be on the
+fallback.
 
 ## Corrections
 
