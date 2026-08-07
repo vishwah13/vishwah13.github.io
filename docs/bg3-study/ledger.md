@@ -39,7 +39,7 @@ analysis. Every claim in the post should be traceable to a row here.
 | 11 | Half-res chain | 5574–5632 | INFERRED | `rdc stats` → `Don't Care` 19 draws @ 1280×720, 4 attachments; red buffer at 5590 | — |
 | 12 | 5 shadow cascades | 5640–11970 | PARTIAL | `rdc snapshot 6000/7000/8500/10500/11800` → all depth 2048×2048; draws 153/280/375/434/81. Projections not extracted | `12-shadow-cascade` |
 | 13 | Shadow mask resolve | 11982–11990 | INFERRED | `rdc rt 11990` red/black mask matching scene shadows | `13-shadow-mask` |
-| 14 | Lighting + indirect VFX | 11998–12119 | PARTIAL | `rdc events --type Dispatch` → 7 direct + 14 `DispatchIndirect` (55098/1222/690/511/42/31/6, six zero). Individual dispatches unidentified | — |
+| 14 | **Tile-classified clustered lighting** | 11998–12119 | **VERIFIED** | 14 `DispatchIndirect` = 14 documented shader variations. Group counts 55098/0/511/0/42/0/0/1222/690/6/31/0/0/0 **sum to 57600 = 320×180 tiles at 8×8 px on 2560×1440**. All lighting dispatches `LocalSize(8,8,1)` = one tile per workgroup. 11998 is `LocalSize(1,1,1)` indirect-args setup; 12004/12009/12016 are `LocalSize(8,8,1)` classification pre-passes. 38 vs 42 bound resources at 12031 vs 12066 confirms distinct variations | — |
 | 15 | Lighting composite | 12126–12144 | INFERRED | `rdc rt 12144` first lit image | — |
 | 16 | Transparents / VFX | 12168–12550 | INFERRED | `rdc rt 12550` fire/embers present | — |
 | 17a | **Fade blending compute** | 12566 | **VERIFIED** | `rdc snapshot 12566` → `LocalSize(16,16,1)`; set1 b0 `Image<float,2D>` (lit scene), b1 `Image<uint,2D>` (stencil), b2 `StorageImage<float,2D>` (out). Body: 16×16 tile origin, groupshared uint + float4 caches with +16 halo, bounded `< 4` neighbourhood loop. Matches GPC "Fade Blending pass: compute during post processing, input lit scene + stencil, 4×4 neighbourhood" | — |
@@ -119,13 +119,17 @@ not state.
 
 Segments still to review, mapped to open questions:
 
+Tile-based shading classification (~20:50–21:15) reviewed and verified — see §14. It
+resolved the 14 indirect dispatches completely and corrected a wrong inference.
+
 | Talk segment | Would likely resolve |
 |---|---|
-| "some other optimizations" (follows decals, ~41:35) | §10 two-attachment pass, §19 late compute |
+| Terrain ("our terrain was also something...", follows tile classification ~21:15) | §10 two-attachment pass, the 229376/180224/163840-triangle shadow draws |
 | Cloud rendering | §11 half-res chain |
-| Shading & lighting pipeline | §7 MRT2/MRT4 semantics, §14 lighting dispatches |
+| Rest of shading & lighting pipeline | §7 MRT2/MRT4 semantics |
 | Cinematics system | §2 shadow map #1, the 48 skinning dispatches |
 | Transparency / see-through | §16 transparents |
+| "some other optimizations" (~41:35) | §19 late compute, §5 remaining |
 
 ### New open question from §8
 
@@ -150,6 +154,13 @@ Worth re-checking against a DX11 capture if one is ever taken: D3D11 has no
 fallback.
 
 ## Corrections
+
+**2026-08-07 — the 14 indirect dispatches are lighting, not VFX.** Originally described as
+"GPU-driven effects / VFX simulation" on the basis of position in the frame and varying
+group counts. They are the per-variation dispatches of the tile-based shading
+classification system: 14 dispatches for 14 shader variations, group counts summing to
+exactly the 57600 on-screen 8×8 tiles. The "one genuinely GPU-driven system" framing was
+right; the subsystem was wrong. Fixed in §14 and in the cross-cutting section.
 
 **2026-08-06 — "BG3 uses bindless" was wrong.** Originally claimed based on the
 `RuntimeDescriptorArray` capability token plus `SPV_EXT_descriptor_indexing` appearing

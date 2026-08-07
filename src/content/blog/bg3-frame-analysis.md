@@ -261,16 +261,67 @@ suspiciously round values suggest terrain tiles.
 
 > TODO: confirm the resolve shader and how the cascades are selected per pixel.
 
-## 14. Deferred lighting and indirect VFX compute — EID 11998–12119
+## 14. Tile-classified clustered lighting — EID 11998–12119
 
-**Status: PARTIAL**
+**Status: VERIFIED**
+
+This is my favourite thing in the frame, and I had it wrong at first — I assumed the
+indirect dispatches here were VFX simulation. They're the lighting.
 
 21 dispatches: 7 direct, then **14 `vkCmdDispatchIndirect`** whose group counts are
-produced on the GPU — 55098, 1222, 690, 511, 42, 31, 6, and six dispatching *zero*
-groups. This is the one genuinely GPU-driven system in the frame.
+produced on the GPU:
 
-> TODO: identify each indirect dispatch and separate the lighting work from the VFX
-> simulation.
+```
+55098, 0, 511, 0, 42, 0, 0, 1222, 690, 6, 31, 0, 0, 0
+```
+
+Add them up and you get **57,600**. The screen is 2560×1440. Divide it into 8×8 pixel
+tiles:
+
+```
+2560 / 8 = 320 tiles across
+1440 / 8 = 180 tiles down
+320 x 180 = 57,600 tiles       <- exactly the sum of the dispatch counts
+```
+
+Every tile on screen is accounted for, exactly once, across fourteen dispatches.
+
+### What's happening
+
+Larian compile **optimised variations of their clustered lighting shader**, each handling
+only one, two or three shading models — **14 combinations** in total. A **classification
+compute pass** examines each 8×8 tile, determines which shading models it actually needs,
+and writes per-variation tile counts and index lists. Then one **indirect dispatch per
+variation** shades only the tiles belonging to it.
+
+The capture backs every part of this:
+
+| Evidence | Value |
+|---|---|
+| Indirect dispatch count | **14** — matching the 14 documented variations |
+| Sum of group counts | **57,600** — exactly the 8×8 tile count at 2560×1440 |
+| Workgroup size of every lighting dispatch | `LocalSize(8, 8, 1)` — 64 threads, one tile per group |
+| EID 11998 | `LocalSize(1,1,1)`, one resource — the indirect-args setup |
+| EID 12004 / 12009 / 12016 | `LocalSize(8,8,1)` — the classification pre-passes |
+| Bound resources per variation | **38** at EID 12031, **42** at EID 12066 — genuinely different shaders, not one shader re-dispatched |
+
+### What the numbers say about this scene
+
+Six of the fourteen variations dispatch **zero** groups. Those shading-model combinations
+simply don't occur anywhere on screen, and they cost nothing beyond an empty dispatch.
+
+One variation takes **55,098 of 57,600 tiles — 95.7% of the screen**. That's the Ravaged
+Beach for you: overwhelmingly terrain and rock under one shading model, with small islands
+of complexity. The 6-tile and 31-tile variations are presumably the character's skin and
+hair, or the fire.
+
+This is the payoff of the technique. Rather than run an uber-shader that branches over
+every shading model for all 57,600 tiles, 95.7% of the screen runs a shader that only
+knows about the one model it needs.
+
+> Note the contrast with the geometry passes: BG3 will happily drive *lighting* from the
+> GPU with indirect dispatch, but every one of its 2601 draws is direct. Compute-side
+> indirect ports cleanly to DirectX 11; GPU-driven geometry submission does not.
 
 ## 15. Lighting composite — EID 12126–12144
 
@@ -630,9 +681,9 @@ Every draw rebinds its own vertex buffers, index buffer and descriptor sets — 
   `drawIndirectCount` is core only from 1.2. So even with indirect draws the GPU
   couldn't decide *how many* to issue, which removes most of the reason to bother.
 
-They clearly know the technique — the VFX system is fully GPU-driven with counts
-produced on-GPU. Indirect is used exactly where the data is already pooled. Geometry
-isn't.
+They clearly know the technique — the tile-classified lighting system above is fully
+GPU-driven, with dispatch counts produced on-GPU. Indirect is used where the work is
+compute. Geometry submission isn't.
 
 DirectX 11 explains the asymmetry. DX11 has no `DrawIndirectCount` and no descriptor
 sets; per-draw binding through `IASetVertexBuffers` and `PSSetShaderResources` *is* its
