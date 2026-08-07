@@ -304,11 +304,27 @@ Twelve quad draws into the 8192² target from section 3.
 
 > TODO: not yet investigated.
 
-## Cross-cutting: a renderer built for a compatibility floor
+## Cross-cutting: a DirectX 11 renderer speaking Vulkan
 
-**Status: VERIFIED**
+**Status: VERIFIED (capture findings) / ATTRIBUTED (Larian statements)**
 
-Three findings only make sense together.
+Taken one at a time, several findings in this frame look like odd omissions for a 2023
+AAA renderer. Taken together — and read alongside what Larian have said publicly — they
+resolve into a single coherent cause.
+
+The key external fact: **Baldur's Gate 3 ships two backends, Vulkan and DirectX 11.**
+Larian's Senior Graphics Programmer Wannes Vanderstappen has explained why. Vulkan
+arrived because *"Baldur's Gate was shipped in early access on PC and Google Stadia,
+which needed Vulcan"*, and DirectX 11 could not be dropped because *"the engine code
+team only moved to BG3 after pre-production happened because we were still working on
+the Definitive Edition of Original Sin 2"* ([80.lv](https://80.lv/articles/baldur-s-gate-3-dev-explained-why-it-supports-two-apis)).
+
+So: Vulkan was added to a DirectX 11-era engine, under deadline pressure, by a team that
+arrived after pre-production. If the renderer must keep working on DX11, a large set of
+Vulkan-only techniques are off the table — not through ignorance, but because they'd
+require maintaining a second, divergent rendering path.
+
+Everything below is what that constraint looks like from inside a frame capture.
 
 ### It targets Vulkan 1.1 — on purpose
 
@@ -356,6 +372,13 @@ Those deliberate gaps suggest the extension is enabled for
 **`descriptorBindingPartiallyBound`** — letting unused slots in a set go unwritten —
 rather than for bindless indexing.
 
+And that layout is exactly what a DirectX 11 resource model looks like when it is ported
+to Vulkan. DX11 binds resources into *numbered register slots* — `t0..tN` for shader
+resources, `b0..bN` for constant buffers — with each slot carrying a fixed engine-wide
+meaning. A renderer whose binding abstraction was built for that maps naturally onto
+fixed, numbered, gap-riddled Vulkan descriptor bindings. Bindless would have meant
+rewriting the resource system for one of two backends.
+
 ### Every draw is direct
 
 There are **zero indirect draws** in the frame. All 2601 are `vkCmdDrawIndexed`.
@@ -394,11 +417,43 @@ They clearly know the technique — the VFX system is fully GPU-driven with coun
 produced on-GPU. Indirect is used exactly where the data is already pooled. Geometry
 isn't.
 
-The shaders are HLSL compiled through DXC (the SPIR-V generator string is `spiregg`),
-which fits an engine with a D3D lineage.
+DirectX 11 explains the asymmetry. DX11 has no `DrawIndirectCount` and no descriptor
+sets; per-draw binding through `IASetVertexBuffers` and `PSSetShaderResources` *is* its
+native model. Building GPU-driven geometry submission would have meant a Vulkan-only
+path diverging from the DX11 one. Compute-driven VFX, by contrast, ports fine —
+compute shaders and structured buffers are DX11 features.
+
+### And the shaders are HLSL
+
+The SPIR-V generator string is `spiregg` — Google's DXC. Larian author in HLSL and
+cross-compile to SPIR-V, which is precisely what you'd expect from an engine whose other
+backend is DirectX.
+
+### Putting it together
+
+Each of these reads as a limitation in isolation. Together they're one decision:
+**this is a DirectX 11 renderer that also speaks Vulkan.** The 1.1 feature floor, the
+numbered slot map, the absence of bindless and indirect draws, and the HLSL toolchain
+are all the same constraint viewed from different angles — the cost of shipping one
+renderer across two APIs, on a schedule set by a streaming platform that no longer exists.
+
+Worth being clear about what is whose: the capture evidence above is mine, the statements
+about Stadia and the engine team's timing are Larian's, and the argument connecting them
+is my interpretation, not something Larian has said.
 
 ## Closing
 
 **Status: TODO**
 
 > TODO: write once the walkthrough is complete.
+
+## Sources
+
+Capture analysis is my own, performed with RenderDoc 1.45 and `rdc-cli`. External
+material, used only where attributed:
+
+- Wannes Vanderstappen, ["The Road to Baldur's Gate 3"](https://www.youtube.com/watch?v=zuDjcoabX7U),
+  Graphics Programming Conference 2024 — *abstract consulted; I have not yet worked
+  through the talk itself, so nothing here is drawn from its contents.*
+- [GPC 2024 archive](https://graphicsprogrammingconference.com/archive/2024/) — talk abstract
+- [80.lv — "Larian Studios' Dev Explained Why Baldur's Gate 3 Supports Two APIs"](https://80.lv/articles/baldur-s-gate-3-dev-explained-why-it-supports-two-apis)

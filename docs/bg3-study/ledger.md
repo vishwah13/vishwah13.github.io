@@ -59,6 +59,52 @@ analysis. Every claim in the post should be traceable to a row here.
 | **Not bindless** | VERIFIED | Five shaders (2363, 4400, 12105, 12550, 13000) — every resource at explicit fixed `DescriptorSet(n), Binding(m)`; no unbounded array. Sparse slot map set 1: 0,1,2,3,4,7,8,9,10,11,12,13,26,27,35,42 |
 | HLSL via DXC | VERIFIED | SPIR-V generator string `spiregg` |
 
+## External sources
+
+**These are a different evidence class from everything above.** The capture tells us what
+the frame *does*; these tell us what Larian *says* they did. Both are useful, and they must
+never be merged into one undifferentiated pile of "facts". Anything sourced here is
+attributed in the post.
+
+| Source | Status | What it gives us |
+|---|---|---|
+| ["The Road to Baldur's Gate 3"](https://www.youtube.com/watch?v=zuDjcoabX7U), Graphics Programming Conference 2024, Breda | **Title, speaker and abstract VERIFIED. Talk contents NOT REVIEWED — the video has not been watched.** | Wannes Vanderstappen, Senior Graphics Programmer, Larian. Abstract confirms a **deferred renderer**, the fourth iteration of the in-house engine, goals of larger/denser worlds and distant vistas, a new cinematics system, split-screen support, plus surface/cloud rendering and deferred transparency handling |
+| [GPC 2024 archive](https://graphicsprogrammingconference.com/archive/2024/) | VERIFIED (fetched) | Talk abstract verbatim |
+| [80.lv — why two APIs](https://80.lv/articles/baldur-s-gate-3-dev-explained-why-it-supports-two-apis) | VERIFIED (fetched), quotes Vanderstappen | BG3 ships **Vulkan + DirectX 11**. Vulkan was adopted because *"Baldur's Gate was shipped in early access on PC and Google Stadia, which needed Vulcan"*. DX11 could not be removed because *"The engine code team only moved to BG3 after pre-production happened because we were still working on the Definitive Edition of Original Sin 2"* |
+| Digital Foundry PC tech review | **UNAVAILABLE** | Both `digitalfoundry.net` and `eurogamer.net` are unfetchable from this environment. Not consulted. |
+
+### Discrepancy to resolve
+
+The GPC abstract says the engine targets "Vulkan and **DirectX 12**". The 80.lv interview with
+the same engineer, PC Gamer's coverage, and the shipping game's own launcher all say
+**DirectX 11**. Our capture cannot settle this — it is a Vulkan capture. Treat DX11 as
+correct for the shipped PC build and note the abstract's inconsistency rather than
+silently picking one.
+
+### Working thesis this unlocks
+
+Larian's own account explains nearly every "why not X" our capture raised. Vulkan was
+bolted onto a DX11-era engine under Stadia deadline pressure, by an engine team that
+arrived after pre-production. If the renderer must keep working on DirectX 11, then:
+
+| Capture finding | Explained by DX11 parity |
+|---|---|
+| Vulkan 1.1 floor, no 1.2/1.3 core features | Stadia-era Vulkan; nothing gained by exceeding the DX11 feature set |
+| Fixed sparse numbered slot map, not bindless | DX11 binds by numbered register slot (`t0..tN`, `b0..bN`). A DX11-shaped resource abstraction maps onto fixed numbered Vulkan bindings with gaps |
+| HLSL compiled via DXC (`spiregg`) | The DX11 backend needs HLSL; the same shaders are cross-compiled to SPIR-V |
+| Zero indirect draws; per-draw vertex/index/descriptor binds | DX11 has no `DrawIndirectCount` and no descriptor sets; per-draw binding is its native model. GPU-driven geometry would need a Vulkan-only path |
+| Deferred renderer, 5-MRT G-buffer | MRT deferred is comfortably within DX11's feature set — and the GPC abstract independently confirms "deferred renderer" |
+
+This is the strongest candidate for the post's central argument: **BG3's Vulkan renderer
+is a DirectX 11-shaped renderer speaking Vulkan.** Note that the thesis is *ours* — it is
+an interpretation built on top of both evidence classes, not something Larian stated.
+
+### Next action on sources
+
+Watch the talk. It is 100% likely to confirm or contradict specific capture findings
+(cascade setup, the 8192² atlas, the indirect VFX dispatches). Until then no claim about
+its *contents* may enter the post — only its abstract, which has been read directly.
+
 ## Corrections
 
 **2026-08-06 — "BG3 uses bindless" was wrong.** Originally claimed based on the
