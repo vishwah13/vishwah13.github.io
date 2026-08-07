@@ -49,6 +49,18 @@ analysis. Every claim in the post should be traceable to a row here.
 | 20 | HUD | 12921–13412 | INFERRED | 109 draws, `rdc rt 13412` shows HUD | — |
 | 21 | Present | 13420–13441 | TODO | — | `00-final-frame` |
 
+## Feature: Terrain 2.0 — VERIFIED
+
+| Claim | Evidence |
+|---|---|
+| Instanced draw, 16384 tris per patch | EID 330/11604/11970 all `numIndices` **49152** with `numInstances` 10/11/14. 49152/3 = 16384 = 64×64×4 |
+| 64 m patch, 1 vert/m, extra centre vertex | 64×64 quads × 4 tris per quad reproduces 16384 exactly |
+| Per-instance culling | Instance counts vary per view: 10/11/14 in shadow passes, 3/2/10/3/5 in G-buffer (EID 4077/4083/4089/4095/4098) |
+| Vertex format is grid coords only | Terrain VS `Input uint2* _3 : [[Location(0)]]` — height sampled from a 244×244 texture in the VS |
+| Holes via NaN centre vertex | Terrain VS contains `float4 _209 = Phi({nan,nan,nan,nan}, {nan,nan,nan,nan}, _22);` |
+| Keys map at ~2× height resolution | PS textures at EID 4077 include 485×485 and 483×463 against 242×242 / 244×244 height maps |
+| Brush texture sets | 12 × 1024×1024 bound at a G-buffer terrain draw. **INFERRED**: consistent with 4 layers × 3 maps, matching the documented 4-layer max — grouping unconfirmed |
+
 ## Cross-cutting findings
 
 | Claim | Status | Evidence |
@@ -122,14 +134,17 @@ Segments still to review, mapped to open questions:
 Tile-based shading classification (~20:50–21:15) reviewed and verified — see §14. It
 resolved the 14 indirect dispatches completely and corrected a wrong inference.
 
+Terrain (~21:15–23:35) reviewed and verified — see the Terrain 2.0 section. It explained
+the three largest draws in the frame and yielded the 16384-triangle patch decomposition.
+
 | Talk segment | Would likely resolve |
 |---|---|
-| Terrain ("our terrain was also something...", follows tile classification ~21:15) | §10 two-attachment pass, the 229376/180224/163840-triangle shadow draws |
+| Rest of terrain (cuts off mid-sentence on the keys map, ~23:35 on) | Keys map layer grouping, the 12 × 1024² brush textures |
 | Cloud rendering | §11 half-res chain |
 | Rest of shading & lighting pipeline | §7 MRT2/MRT4 semantics |
 | Cinematics system | §2 shadow map #1, the 48 skinning dispatches |
 | Transparency / see-through | §16 transparents |
-| "some other optimizations" (~41:35) | §19 late compute, §5 remaining |
+| "some other optimizations" (~41:35) | §19 late compute |
 
 ### New open question from §8
 

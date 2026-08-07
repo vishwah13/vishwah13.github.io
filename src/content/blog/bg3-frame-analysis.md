@@ -247,8 +247,9 @@ totalling 1323 draws and roughly 9.4M triangles.
 
 Draw counts climb across the cascades (153, 280, 375, 434, 81), consistent with
 progressively larger world-space coverage. The three heaviest draws in the entire
-frame — 229376, 180224 and 163840 triangles — are all in these passes, and their
-suspiciously round values suggest terrain tiles.
+frame — 229,376, 180,224 and 163,840 triangles — are all in these passes, and they are
+instanced terrain draws of 14, 11 and 10 patches respectively. See the Terrain 2.0
+section below.
 
 > TODO: extract the cascade projection matrices and confirm the split distances.
 
@@ -385,6 +386,90 @@ Twelve quad draws into the 8192² target from section 3.
 **Status: TODO**
 
 > TODO: not yet investigated.
+
+## Feature study: Terrain 2.0
+
+**Status: VERIFIED (capture) / ATTRIBUTED (design rationale from Larian's GPC talk)**
+
+Early on I flagged the three largest draws in the frame — 229,376, 180,224 and 163,840
+triangles — as "suspiciously round, probably terrain." They are terrain, and the exact
+numbers turn out to say a great deal.
+
+### One instanced draw, 16,384 triangles per patch
+
+| EID | numIndices | numInstances | total triangles |
+|---|---|---|---|
+| 330 | 49,152 | **10** | 163,840 |
+| 11604 | 49,152 | **11** | 180,224 |
+| 11970 | 49,152 | **14** | 229,376 |
+
+The index count is identical every time — **49,152 indices = 16,384 triangles per patch** —
+and only the instance count changes. That number decomposes exactly:
+
+```
+64 x 64 quads  x  4 triangles per quad  =  16,384
+```
+
+Which is precisely the geometry Larian describe: a **64 m² patch at one vertex per metre**,
+with an **extra centre vertex** turning each quad into a four-triangle fan. In *Divinity:
+Original Sin 2* terrain patches were one vertex every 2 m and each patch was **its own draw
+call**, with a further **unique draw call per painted material layer**, all alpha tested.
+BG3 collapses that to one instanced draw with per-instance culling.
+
+The varying instance counts are that culling working: 10, 11 and 14 patches survive for
+three different shadow views. In the G-buffer pass the same terrain appears as instanced
+draws of 3, 2, 10, 3 and 5 patches.
+
+### The vertex format is two integers
+
+```
+Input uint2* _3 : [[Location(0)]];
+```
+
+That is the *entire* per-vertex input — a packed grid coordinate. Height comes from a
+texture sampled in the vertex shader (244×244 in this frame). It's why Larian could
+quadruple the tessellation and note it "didn't add anything in our map data": the mesh is
+a shared template, and the map data is a heightfield.
+
+### Holes are cut with NaN
+
+An instanced draw can't skip patches, so cutting a hole in the terrain — for a cave mouth
+or a building interior — needs a trick. Larian keep a per-quad hole flag and, where a hole
+exists, **set the centre vertex to NaN**, which kills all four of that quad's triangles at
+rasterization. Their slide calls it a "~~Hack~~ Creative workaround."
+
+It's visible in the shipped terrain vertex shader:
+
+```
+float4 _209 = Phi({nan, nan, nan, nan}, {nan, nan, nan, nan}, _22);
+```
+
+A branch merge whose result is a `float4` of NaN. There are few things more satisfying in
+a frame capture than finding the exact line where a studio admitted to a hack.
+
+### Layer blending
+
+Terrain shading uses **brushes** with height-based blending: at most four layers blended
+per pixel, drawn from many more layers overall, with a **keys map** generated offline
+holding the eight most contributing layers per texel — and, per Larian, stored at twice the
+height map's resolution.
+
+The bound textures at a G-buffer terrain draw line up with that:
+
+| Texture | Size | Reading |
+|---|---|---|
+| Vertex-stage heightfield | 244×244 | height data |
+| Pixel-stage | 242×242 | height/derived data |
+| Pixel-stage | **485×485** | ≈ 2× the 242² map — the keys map |
+| Pixel-stage | 483×463 | a second ~2× map |
+| Pixel-stage | **12 × 1024×1024** | terrain brush texture sets |
+
+The 485×485 against 242×242 is the two-to-one relationship the talk describes (the maps are
+sized to world extent rather than to powers of two, so it isn't exactly 484).
+
+> INFERRED: twelve 1024² textures is consistent with **four layers × three maps each**,
+> matching the documented four-layers-per-pixel maximum — but I have not confirmed the
+> grouping.
 
 ## Feature study: fading opaque objects without visible dithering
 
