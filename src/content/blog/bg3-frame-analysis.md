@@ -202,11 +202,15 @@ Output float4* _11 : [[Location(4)]];
 
 ## 8. Decals — EID 4387–4531
 
-**Status: INFERRED**
+**Status: VERIFIED**
 
-45 draws that re-write the normal buffer after the G-buffer is complete.
+45 draws that write back into the G-buffer, and they split cleanly into two completely
+different systems:
 
-> TODO: confirm these are decals and identify what they project.
+- **40 draws of 12 triangles** — `numIndices: 36`, i.e. a box. Conventional deferred decal
+  volumes.
+- **5 draws of 28,800 triangles** — a screen-space tile mesh. These are gameplay surfaces,
+  and they get their own section below.
 
 ## 9. Mid passes — EID 4586–4776
 
@@ -419,6 +423,98 @@ stencil references and an unexplained compute dispatch. The talk alone doesn't t
 which path ships on Vulkan. Together they explain both the technique and why this backend
 takes the slower route.
 
+## Feature study: gameplay surfaces as screen-space tile meshes
+
+**Status: VERIFIED (capture) / ATTRIBUTED (technique from Larian's GPC talk)**
+
+BG3 is constantly covered in gameplay surfaces — blood, water, ice, fire, poison — that
+spawn in noisy, arbitrary shapes, grow, shrink and overwrite each other. They're deferred
+decals, but the shapes come from a gameplay AI grid rather than from artist-placed volumes,
+and that makes the usual approaches awkward. Larian
+[described the problem](https://www.youtube.com/watch?v=zuDjcoabX7U) as: many small decals
+means overdraw, one big masked decal means seams when surfaces grow, and one huge decal
+over the whole terrain wastes enormous work on empty space — because a deferred decal has
+to sample depth, unproject to world space, convert to grid space and sample the mask
+*before* it can discover there's nothing there. Two texture samples to early-out is not
+much of an early-out.
+
+Their solution is to **dynamically generate the decal mesh in screen space**: a fixed
+shared vertex buffer of screen tiles, with an index buffer generated per surface type by a
+compute shader. Tiles containing no surface of that type get all-zero indices, producing
+degenerate triangles that never rasterize.
+
+The capture shows this working, and pins down numbers the talk doesn't give.
+
+### The tile grid is 16×16 pixels
+
+Each of the five tile draws issues **86,400 indices — 28,800 triangles**. At 2560×1440:
+
+```
+2560 / 16 = 160 tiles across
+1440 / 16 =  90 tiles down
+160 x 90  = 14,400 tiles
+14,400 x 2 triangles = 28,800      <- exactly the draw size
+```
+
+And the generating compute shader at EID 4382 is `LocalSize(16, 16, 1)` — one thread per
+pixel of one tile, matching "for every pixel in a tile: check which surface is there".
+
+### One buffer, five regions
+
+All five draws bind the **same vertex buffer** and the **same index buffer**, and select
+their slice with `firstIndex`:
+
+| EID | numIndices | firstIndex |
+|---|---|---|
+| 4514 | 86,400 | 0 |
+| 4516 | 86,400 | 86,400 |
+| 4521 | 86,400 | 172,800 |
+| 4526 | 86,400 | 259,200 |
+| 4531 | 86,400 | 345,600 |
+
+So "an index buffer per surface type" is, concretely, one compute-generated buffer with a
+contiguous per-type region — 432,000 indices for the five surface types active in this
+frame. Every draw always covers the full tile grid; the culling happens entirely through
+degenerate triangles.
+
+### The depth test really is gone
+
+Larian's slide claims the technique means "no typical decal depth/stencil test anymore."
+The capture confirms it, and the contrast with the conventional decals in the same pass
+makes it unambiguous:
+
+| | Box decal (4396) | Tile draw (4514) |
+|---|---|---|
+| depth test | **enabled** | **disabled** |
+| depth write | disabled | disabled |
+| index count | 36 (a cube) | 86,400 |
+| vertex buffer | per-decal | shared |
+
+Because a tile only exists where its surface is actually visible, occlusion has already
+been resolved at index-generation time.
+
+One caveat the talk doesn't cover: the tile draws *do* still have a stencil test enabled —
+`GREATER_OR_EQUAL`, reference and mask both **64**, keeping on pass and fail. That is a
+different bit from the ones the fading system uses (16 and 32), and it isn't a depth-derived
+decal bound, so it's most likely a receiver mask marking which pixels can accept surfaces.
+
+> INFERRED: I have not traced what writes stencil bit 64, so the receiver-mask reading is
+> unconfirmed.
+
+### Forty surface types
+
+The generating shader declares three descriptor arrays of fixed size **40**:
+
+```
+UniformConstant Image<float, 2D>[40]* _15 : [[DescriptorSet(1), Binding(6)]];
+UniformConstant Image<float, 2D>[40]* _16 : [[DescriptorSet(1), Binding(7)]];
+UniformConstant Image<float, 2D>[40]* _17 : [[DescriptorSet(1), Binding(8)]];
+```
+
+Forty possible surface types with three texture maps each — of which five were present in
+this frame. Note these are **fixed-size** arrays, not unbounded ones; more on that
+distinction below.
+
 ## Cross-cutting: a DirectX 11 renderer speaking Vulkan
 
 **Status: VERIFIED (capture findings) / ATTRIBUTED (Larian statements)**
@@ -475,6 +571,12 @@ VK_EXT_shader_demote_to_helper_invocation
 token appears in the SPIR-V — which looks like bindless at a glance. It isn't. Across
 five shaders (G-buffer, decals, VFX, lighting compute, UI), **every resource is bound
 at an explicit fixed set and binding**. Not one unbounded descriptor array.
+
+The surface-tile shader above is the closest thing to an exception, and it proves the
+rule: it declares `Image<float, 2D>[40]` — a descriptor **array**, but a *fixed-size*
+one. That is an ordinary sized array of forty descriptors, not the unbounded
+`RuntimeDescriptorArray` that makes a renderer bindless. Larian use arrays where a
+system has a known upper bound; they don't index a global unbounded resource table.
 
 What's actually there is a hand-assigned sparse slot map:
 

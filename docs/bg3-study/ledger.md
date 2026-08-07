@@ -32,7 +32,8 @@ analysis. Every claim in the post should be traceable to a row here.
 | 5 | **Fill Stencil (object fading)** | 361–379 | **VERIFIED** | `rdc pipeline 364/368/371/374/377 stencil` → all func AlwaysTrue, pass op Replace; refs 1/2/4/8/16 with matching writeMasks = one draw per bit. Matches GPC talk's documented "separate draw per bit" fallback | — |
 | 6 | Z-prepass | 382–2339 | VERIFIED | `rdc snapshot 2000` → depth 2560×1440, no colour target; `rdc draws --pass` shows tri counts 94120/42014/21005 matching §7 | — |
 | 7 | G-buffer | 2344–4351 | PARTIAL | `rdc rt 4351 --target 0..4` all 2560×1440; `rdc stats` → 6 attachments; shader_ps.txt `Output Location(0..4)`; `rdc pick-pixel` → MRT0 B=0/A=1, MRT3 all-zero. **MRT2/MRT4 unresolved** | `07-gbuffer-sheet`, `07-gbuffer-mrt0-normals`, `07-gbuffer-mrt1-albedo` |
-| 8 | Decals | 4387–4531 | INFERRED | `rdc rt 4531` still shows normals | — |
+| 8 | **Decals (two systems)** | 4387–4531 | **VERIFIED** | 45 draws = 40 box decals (`numIndices` 36 = cube, depthTest **on**) + 5 screen-space surface-tile draws (86400 indices each, depthTest **off**, shared VB 2247 + shared IB 746058 at firstIndex 0/86400/172800/259200/345600). 28800 tris = 160×90 tiles ×2 at 16×16 px on 2560×1440 | — |
+| 8a | **Surface tile index-gen compute** | 4382 | **VERIFIED** | `rdc snapshot 4382` → `LocalSize(16,16,1)` (one thread per tile pixel); 3× `Image<float,2D>[40]` surface-type arrays; 5 RO + 3 RW SSBOs, one being the generated index buffer | — |
 | 9 | Mid passes | 4586–4776 | TODO | — | — |
 | 10 | Two-attachment pass | 4790–5566 | TODO | `rdc stats` → 132 draws, 529324 tris, 2 attachments | — |
 | 11 | Half-res chain | 5574–5632 | INFERRED | `rdc stats` → `Don't Care` 19 draws @ 1280×720, 4 attachments; red buffer at 5590 | — |
@@ -112,14 +113,25 @@ pass and one misfiled dispatch into two positively identified passes, and produc
 original synthesis neither source contains alone (see below). Prioritise reviewing more of
 the talk over further blind capture spelunking.
 
+Surface decal rendering (~38:40–41:40) also reviewed and verified — see §8 and §8a. It
+resolved the decal pass completely and yielded the 16×16 tile size, which the talk does
+not state.
+
 Segments still to review, mapped to open questions:
 
 | Talk segment | Would likely resolve |
 |---|---|
-| "our surfaces" (follows fading, ~38:30) | §10 two-attachment pass, §16 transparents |
+| "some other optimizations" (follows decals, ~41:35) | §10 two-attachment pass, §19 late compute |
 | Cloud rendering | §11 half-res chain |
 | Shading & lighting pipeline | §7 MRT2/MRT4 semantics, §14 lighting dispatches |
 | Cinematics system | §2 shadow map #1, the 48 skinning dispatches |
+| Transparency / see-through | §16 transparents |
+
+### New open question from §8
+
+What writes stencil **bit 64**? The surface-tile draws test it with `GREATER_OR_EQUAL`,
+ref/mask 64, keep on pass and fail. It is distinct from the fading system's bits 16 and 32.
+Reading it as a "surface receiver" mask is currently INFERRED — trace the writer to confirm.
 
 ### Original synthesis: why Vulkan takes the slow path on stencil fill
 
