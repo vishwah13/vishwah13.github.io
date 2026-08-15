@@ -115,36 +115,37 @@ an interpretation built on top of both evidence classes, not something Larian st
 
 ### Talk content reviewed so far
 
-Screenshots and a transcript excerpt covering the **fading opaque objects** segment
-(~34:30–38:30) are in `C:\Dev\Graphics Study\Baldur's gate 3\RenderDoc\youtube Sources\`.
-That section is now VERIFIED against the capture — see §5 and §17a. Everything else in
-the talk remains unreviewed.
+Slide screenshots and transcript excerpts live in
+`C:\Dev\Graphics Study\Baldur's gate 3\RenderDoc\youtube Sources\`.
 
-**This paid off far better than any RenderDoc-only session.** The talk turned one TODO
-pass and one misfiled dispatch into two positively identified passes, and produced an
-original synthesis neither source contains alone (see below). Prioritise reviewing more of
-the talk over further blind capture spelunking.
+**Reviewing talk segments pays off far better than RenderDoc-only sessions.** Prioritise it
+over blind capture spelunking. Every breakthrough so far came from taking a claim in the
+talk and finding the arithmetic that proves it in the capture.
 
-Surface decal rendering (~38:40–41:40) also reviewed and verified — see §8 and §8a. It
-resolved the decal pass completely and yielded the 16×16 tile size, which the talk does
-not state.
+### Segments reviewed and verified
 
-Segments still to review, mapped to open questions:
+| Talk segment | Timestamp | Post section | What it gave us |
+|---|---|---|---|
+| Tile-based shading classification | ~20:50–21:15 | §14 | Resolved the 14 indirect dispatches; group counts sum to exactly 57600 = the 8×8 tile count. Corrected a wrong "VFX simulation" inference |
+| Terrain 2.0 | ~21:15–23:35 | Terrain 2.0 | Explained the three largest draws; 49152 indices = 16384 tris/patch = 64×64×4. Found the NaN hole hack in the shipped shader |
+| Fading opaque objects | ~34:30–38:30 | §5, §17a | Turned one TODO pass and one misfiled dispatch into two identified passes. Yielded the `VK_EXT_shader_stencil_export` synthesis |
+| Surface decal rendering | ~38:40–41:40 | §8, §8a | Resolved the decal pass completely; yielded the 16×16 tile size, which the talk does not state |
 
-Tile-based shading classification (~20:50–21:15) reviewed and verified — see §14. It
-resolved the 14 indirect dispatches completely and corrected a wrong inference.
+### Segments still to review
 
-Terrain (~21:15–23:35) reviewed and verified — see the Terrain 2.0 section. It explained
-the three largest draws in the frame and yielded the 16384-triangle patch decomposition.
+| Talk segment | Timestamp | Would likely resolve |
+|---|---|---|
+| Rest of shading & lighting pipeline | — | §7 MRT2/MRT4 semantics — **the biggest open question** |
+| Rest of terrain (transcript cuts off mid-sentence on the keys map) | ~23:35 on | Keys map layer grouping, the 12 × 1024² brush textures |
+| Cloud rendering | — | §11 half-res chain |
+| Cinematics system | — | §2 shadow map #1, the 48 skinning dispatches |
+| Transparency / see-through | — | §16 transparents |
+| "some other optimizations" | ~41:35 | §19 late compute |
 
-| Talk segment | Would likely resolve |
-|---|---|
-| Rest of terrain (cuts off mid-sentence on the keys map, ~23:35 on) | Keys map layer grouping, the 12 × 1024² brush textures |
-| Cloud rendering | §11 half-res chain |
-| Rest of shading & lighting pipeline | §7 MRT2/MRT4 semantics |
-| Cinematics system | §2 shadow map #1, the 48 skinning dispatches |
-| Transparency / see-through | §16 transparents |
-| "some other optimizations" (~41:35) | §19 late compute |
+Note: the "some other optimizations" segment at ~41:35 sits under the talk's *Technical
+changes & Optimizations* heading and is **distinct** from tile-based shading
+classification, which is under *New and improved rendering features*. The two have been
+confused once already.
 
 ### New open question from §8
 
