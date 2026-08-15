@@ -203,6 +203,48 @@ combinations covers, or a tile needing none.
 draw and triangle counts match the beach's 13 draws / 109 tris, but the target size does
 not. Downgrade any claim that this is a fixed glyph atlas.
 
+## Third capture
+
+`Close_Up_Cinematic_Dialog_Capture_3_Vulkan_TAA.rdc` (3.46 GB) — **Goblin Camp dialogue
+close-up**. Gale, Klaw (worg) and Sentinel Olak (goblin). Skin, fur, hair, cloth, metal at
+close range; no HUD. Took several attempts to capture.
+
+2365 events, 1939 draws, 141 dispatches, 2560×1440. G-buffer is pass #19, EID 3091–4532.
+
+**Tooling gotcha:** it would not open — `daemon failed to start (timeout (15.0s))`. Not a
+crash, not memory (11.6 GB free): the capture takes **15.8s** to initialise, just over
+rdc-cli's 15s default. Fix is `RDC_OPEN_TIMEOUT=300`. Set this for any capture over ~3 GB.
+
+**Invariants held again:** 6 G-buffer attachments, Fill Stencil 5 draws at refs 1/2/4/8/16,
+14 indirect lighting dispatches, 21/3 lighting/post dispatches, terrain 49152 indices.
+
+**Tile sums across all three:** Beach 57600, Grove 57599, Cinematic 57600. Since two of
+three partition exactly, the Grove's missing tile is scene-specific, not systematic.
+
+**Cinematics system — character lighting rig.** Eight small 2048² depth-only passes before
+the Z-prepass (other captures have one), with repeating triangle counts (69851 ×2,
+345039 ×2) = same character geometry rendered into several shadow maps from different light
+positions. Matches Vishwah's note from the talk that characters get dedicated lights on a
+separate channel from the environment. **Also new:** ten 4096×4096 textures, absent from
+both other captures — not the shadow targets (those are 2048²), so likely high-resolution
+character assets for the close-up. Unidentified.
+
+**MRT2 / MRT4 — two translucency systems (INFERRED but well-evidenced).** Sampling skin,
+fur, hide, cloth, metal and stone at EID 4532:
+
+| Material | MRT2.B | MRT4 |
+|---|---|---|
+| Human skin | 0.400 | white |
+| Worg fur | 0.400 | white |
+| Worg bare hide | 0 | 0.97, 0.56, 0.02 |
+| Cloth robe | 0 | 0.87, 0.44, 0.26 |
+| Goblin skin / metal / stone | 0 | white |
+
+`MRT2.B` is discrete — exactly 0.400 (102/255) or zero. The two channels are mutually
+exclusive: MRT4 carries colour precisely where MRT2.B is zero. Reads as an SSS path (skin,
+fur) versus a thin-surface transmission tint (hide, cloth, and foliage in the Grove).
+Needs a shader trace to confirm.
+
 ## Corrections
 
 **2026-08-15 — G-buffer contact sheets were alpha-composited and misled me.** Every

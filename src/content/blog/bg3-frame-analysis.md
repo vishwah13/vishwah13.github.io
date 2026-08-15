@@ -25,9 +25,10 @@ nautiloid crash.
 
 **Status: VERIFIED**
 
-Two captures, both Vulkan, taken with RenderDoc 1.45: the **Ravaged Beach** in Act 1
-(2.68 GB) and the **Emerald Grove** (3.03 GB). The walkthrough below follows the beach
-frame; the Grove is used to separate architecture from scene-specific coincidence.
+Three captures, all Vulkan, taken with RenderDoc 1.45: the **Ravaged Beach** in Act 1
+(2.68 GB), the **Emerald Grove** (3.03 GB), and a **Goblin Camp dialogue close-up**
+(3.46 GB). The walkthrough below follows the beach frame; the other two are used to
+separate architecture from scene-specific coincidence.
 
 Everything here was pulled with `rdc-cli` driving a source-built RenderDoc 1.45 Python
 module — matching the capture's serialise version was necessary, since an earlier 1.41
@@ -205,22 +206,55 @@ party instead of open sand:
 |---|---|---|
 | MRT0 | Encoded normals, 2-channel | **VERIFIED** — B is exactly 0.0 and A exactly 1.0 at every sampled pixel in both captures; only R and G vary, which is why it renders yellow-green |
 | MRT1 | Albedo, with data in alpha | **VERIFIED** as albedo; alpha varies per material (1.00 / 0.85 / 0.96 across character, stone, dirt) but its meaning is unconfirmed |
-| MRT2 | Per-material scalar parameters | **PARTIAL** — G is pinned at exactly 0.498 (127/255) in *every* sample across both captures, so it is either unused or a signed zero. R varies with surface (0.95 stone, 0.95 dirt, 0.64 foliage), which reads like roughness. B is 0 except on some characters |
+| MRT2 | Shading-model / material parameters | **PARTIAL** — G is pinned at 0.498 (127/255) almost everywhere across all three captures, deviating only slightly on a few materials, so it reads as a signed value whose zero is 0.5. R varies with surface (0.95 stone, 0.87 fur, 0.51 skin) like a roughness term. **B is a discrete flag** — see below |
 | MRT3 | Motion vectors | **VERIFIED** — see below |
-| MRT4 | Per-material colour parameter | **INFERRED** — white (1,1,1,1) on stone, dirt and characters; strongly coloured on vegetation (foliage samples 0.37, 0.56, 0.03). Reads like a translucency or transmission tint with white as the opaque default, though the vivid per-object colours on rocks in the beach capture argue for something more like a material tint |
+| MRT4 | Per-material colour parameter | **INFERRED** — white (1,1,1,1) on most materials, strongly coloured on a specific subset. See below |
 
-### The second capture confirms MRT3
+### Two translucency systems, flagged in different channels
+
+The cinematic capture puts skin, fur, cloth, metal and stone on screen at close range, and
+that separates MRT2 and MRT4 in a way one scene never could:
+
+| Material | MRT2.B | MRT4 |
+|---|---|---|
+| Human skin | **0.400** | white |
+| Worg fur | **0.400** | white |
+| Worg bare hide | 0 | **0.97, 0.56, 0.02** |
+| Cloth robe | 0 | **0.87, 0.44, 0.26** |
+| Goblin skin | 0 | white |
+| Metal armour | 0 | white |
+| Stone ground | 0 | white |
+
+`MRT2.B` is not continuous — it is exactly **0.400 (102/255) or zero**. A discrete flag,
+raised on human skin and fur and nothing else in the frame. Meanwhile MRT4 carries a colour
+on precisely the materials where MRT2.B is *not* raised: the worg's bare hide, cloth, and
+(in the Grove capture) foliage — all thin surfaces that transmit light. The two are
+mutually exclusive.
+
+That reads as **two different translucency models**: a subsurface-scattering path flagged in
+MRT2.B for skin and fur, and a thin-surface transmission tint in MRT4 for hide, cloth and
+leaves. White in MRT4 is most likely the cleared value on materials that never write it.
+
+This also explains why the tile classifier needs fourteen combinations. These are exactly
+the "shading models" it sorts tiles by.
+
+> INFERRED: the two-system reading fits every material sampled across three captures, but
+> I have not traced the writes in a shader to confirm it.
+
+### MRT3 is confirmed motion vectors
 
 In the Ravaged Beach frame MRT3 is all zeros, which I put down to a static camera. That was
 consistent with motion vectors but didn't prove them — an unused buffer looks identical.
 
-The Grove settles it. The camera is static there too, yet MRT3 is **not** empty: it has
-motion precisely on the **wind-animated foliage** — blue across the tree canopy, purple on
-individual plants — and nowhere else. Vegetation is the only thing in the scene that moves
-while the camera doesn't. That is motion vectors, and it is what feeds the TAA in this
-capture's name.
+Two more captures settle it. The Grove also has a static camera, yet MRT3 is **not** empty
+there: motion appears precisely on the **wind-animated foliage** and nowhere else. And the
+cinematic makes it unmistakable:
 
-> TODO: MRT2's B/A channels and MRT4's exact meaning still need a shader trace to confirm.
+![Motion vectors during a cinematic](/img/blog/bg3/07-mrt3-motion-vectors.png)
+*MRT3 during dialogue. The three characters are animating; the entire set is black.*
+
+Characters move, the environment doesn't, and the buffer shows exactly that. This is what
+feeds the TAA in the capture's filename.
 
 ![G-buffer normals](/img/blog/bg3/07-gbuffer-mrt0-normals.png)
 *MRT0 — two-channel encoded normals. The green-yellow cast is the empty blue channel.*
@@ -679,74 +713,90 @@ Forty possible surface types with three texture maps each — of which five were
 this frame. Note these are **fixed-size** arrays, not unbounded ones; more on that
 distinction below.
 
-## A Second Capture
+## Three Captures
 
 **Status: VERIFIED**
 
-Everything above comes from one frame, which is a weakness: you cannot tell an
-architectural property from a coincidence of one scene. So I took a second capture in a
-deliberately different place — the **Emerald Grove**, dense with foliage, water and a
-four-person party, instead of open sand with a single character.
+A single frame cannot tell you which of its properties are architectural and which are
+coincidences of one scene. So there are three captures, chosen to be as different as
+possible:
 
-![The second capture](/img/blog/bg3/00-final-frame-grove.png)
-*The second analysed frame: Emerald Grove, Sacred Pool.*
+- **Ravaged Beach** — open sand, one character, distant vistas
+- **Emerald Grove** — dense foliage, water, a four-person party
+- **Goblin Camp cinematic** — dialogue close-up, three characters, no HUD
+
+![The Grove capture](/img/blog/bg3/00-final-frame-grove.png)
+*Emerald Grove, Sacred Pool.*
+
+![The cinematic capture](/img/blog/bg3/00-final-frame-cinematic.png)
+*Goblin Camp, mid-dialogue. Skin, fur, hair, cloth and metal at close range.*
 
 The scene-dependent numbers move a great deal:
 
-| | Ravaged Beach | Emerald Grove |
-|---|---|---|
-| Draw calls | 2,601 | **3,723** |
-| Total dispatches | 78 | **139** |
-| Skinning dispatches | 48 | **110** |
-| Visible geometry | 2.62M tris | **4.65M tris** |
-| Shadow geometry | 9.4M tris | **7.12M tris** |
+| | Beach | Grove | Cinematic |
+|---|---|---|---|
+| Draw calls | 2,601 | **3,723** | **1,939** |
+| Total dispatches | 78 | 139 | **141** |
+| Skinning dispatches | 48 | 110 | ~127 |
+| Visible geometry | 2.62M tris | 4.65M tris | 1.04M tris |
 
-Note that the Grove has **more visible geometry but fewer shadow triangles**. It's an
-enclosed space, so the cascades cover far less distant terrain — the beach's open vista is
-what made its shadow cost so lopsided.
+The cinematic has the **fewest draws but the most dispatches** — a tight shot containing
+little geometry but three heavily animated characters.
 
 The structural numbers do not move at all:
 
-| | Ravaged Beach | Emerald Grove |
-|---|---|---|
-| Resolution | 2560×1440 | 2560×1440 |
-| G-buffer attachments | 6 | 6 |
-| Fill Stencil draws | 5, refs 1/2/4/8/16 | **5, refs 1/2/4/8/16** |
-| Half-res chain | 19 draws @ 1280×720 | **19 draws @ 1280×720** |
-| Lighting shader variations | 14 indirect dispatches | **14 indirect dispatches** |
-| Lighting block | 21 dispatches | **21 dispatches** |
-| Post-processing block | 3 dispatches | **3 dispatches** |
-| Terrain patch | 49,152 indices | **49,152 indices** |
+| | Beach | Grove | Cinematic |
+|---|---|---|---|
+| Resolution | 2560×1440 | 2560×1440 | 2560×1440 |
+| G-buffer attachments | 6 | 6 | 6 |
+| Fill Stencil draws | 5, refs 1/2/4/8/16 | identical | identical |
+| Lighting shader variations | 14 | 14 | 14 |
+| Lighting / post blocks | 21 / 3 | 21 / 3 | 21 / 3 |
+| Terrain patch | 49,152 indices | **49,152** | **49,152** |
 
-The terrain figure is the one I'd point at. A completely different landscape, different
-patch counts, different instance counts per draw — and the index count per patch is
-identical to the byte, because the patch mesh is a fixed template and only the heightfield
-changes. Likewise the Fill Stencil pass runs its five draws in the Grove, where little or
-nothing is fading, confirming that the Vulkan fallback is paid unconditionally every frame.
+The terrain figure is the one I'd point at. Three completely different landscapes,
+different patch counts, different instance counts per draw — and the index count per patch
+is identical to the byte, because the patch mesh is a fixed template and only the
+heightfield changes. Likewise the Fill Stencil pass runs its five draws in all three,
+including scenes where nothing is fading, confirming the Vulkan fallback is paid
+unconditionally every frame.
+
+### The cinematics system shows up as shadow maps
+
+The cinematic capture opens with **eight small 2048² depth-only passes** before the
+Z-prepass. The other two captures have exactly one. The triangle counts among those eight
+repeat — 69,851 appears twice, 345,039 twice — meaning the *same character geometry* is
+being rendered into several shadow maps from different positions.
+
+That is a dedicated character lighting rig: extra lights attached to the characters for a
+dialogue shot, each casting its own shadow. Larian have described using separate light
+channels for characters versus environment for exactly this reason. It's also the clearest
+cost of the cinematics system visible in a capture — eight extra shadow renders before the
+frame proper begins.
 
 ### One tile short
 
-The tile-classified lighting gave the sharpest result. Fourteen indirect dispatches again,
-and the group counts are:
+The tile classifier gave the sharpest cross-capture result. Fourteen indirect dispatches in
+all three. The group counts sum to:
 
-```
-48763, 2, 14, 650, 160, 8, 42, 115, 7551, 22, 102, 0, 0, 170
-```
+| Capture | Sum | Screen tiles |
+|---|---|---|
+| Beach | **57,600** | 57,600 |
+| Grove | **57,599** | 57,600 |
+| Cinematic | **57,600** | 57,600 |
 
-That sums to **57,599**. The screen is 57,600 tiles. In the beach frame the counts summed
-to exactly 57,600 — a perfect partition. Here, **exactly one tile is unaccounted for**.
+Two frames partition the screen exactly. The Grove is **one tile short** — and since the
+other two are perfect, it isn't a systematic property of the technique but something about
+that scene. A single tile needing more shading models than any of the fourteen combinations
+covers would explain it, as would one needing none at all. It is far too precise to be
+noise.
 
-I don't yet know why. A single tile needing more shading models than any of the 14
-combinations covers would explain it, as would a tile that needs no shading at all. It is
-too precise to be noise, and it is the kind of detail a single capture could never have
-surfaced.
+The distribution shifts hard with content. On the beach one variation covered 95.7% of the
+screen; in the Grove 84.7%; in the cinematic 81.2% with a much longer tail — exactly what
+you would expect as sand and rock give way to foliage, water, and then skin, fur, hair,
+cloth and metal.
 
-The distribution also shifts hard. On the beach one variation covered 95.7% of the screen.
-In the Grove the largest covers 84.7% and a second takes 13.1%, with only two variations
-idle instead of six — exactly what you'd expect when sand and rock give way to foliage,
-water, skin and stone.
-
-> TODO: identify the missing tile.
+> TODO: identify the Grove's missing tile.
 
 ## A DirectX 11 Renderer Speaking Vulkan
 
