@@ -25,11 +25,14 @@ nautiloid crash.
 
 **Status: VERIFIED**
 
-The capture is a 2.9 GB `.rdc` (6.07 GB of frame-capture section) taken with
-RenderDoc 1.45. Everything below was pulled with `rdc-cli` driving a source-built
-RenderDoc 1.45 Python module — matching the capture's serialise version was necessary,
-since an earlier 1.41 build refused the file outright ("Vulkan capture is incompatible
-version 32, newest supported by this build is 23").
+Two captures, both Vulkan, taken with RenderDoc 1.45: the **Ravaged Beach** in Act 1
+(2.68 GB) and the **Emerald Grove** (3.03 GB). The walkthrough below follows the beach
+frame; the Grove is used to separate architecture from scene-specific coincidence.
+
+Everything here was pulled with `rdc-cli` driving a source-built RenderDoc 1.45 Python
+module — matching the capture's serialise version was necessary, since an earlier 1.41
+build refused the file outright ("Vulkan capture is incompatible version 32, newest
+supported by this build is 23").
 
 Two things make BG3 harder to read than a typical sample:
 
@@ -182,17 +185,42 @@ Output float4* _11 : [[Location(4)]];
 ```
 
 ![The five G-buffer targets](/img/blog/bg3/07-gbuffer-sheet.png)
-*All five colour targets at the end of the G-buffer pass.*
+*All five colour targets at the end of the G-buffer pass, Ravaged Beach.*
+
+**A warning about looking at these buffers.** Every one of them stores real data in its
+alpha channel, and on several the alpha is very low — MRT2 sits at `a = 0.031` (8/255)
+across most of the screen. If you composite such an image, or simply display it on a dark
+page, the viewer blends the RGB toward the background and you see almost nothing. My first
+pass at this misread MRT2 as "black except the characters" for exactly that reason. Every
+G-buffer image here has alpha forced to 1 so you are seeing the stored RGB.
+
+To separate what is architectural from what is scene-specific, here is the same G-buffer
+from a second capture — the Emerald Grove, with dense foliage, water and a four-person
+party instead of open sand:
+
+![The same five targets in the Emerald Grove](/img/blog/bg3/07-gbuffer-sheet-grove.png)
+*The same five colour targets in a second capture, Emerald Grove.*
 
 | Target | Contents | Confidence |
 |---|---|---|
-| MRT0 | Encoded normals, 2-channel | VERIFIED — B is exactly 0.0 and A exactly 1.0 at every sampled pixel; only R and G vary, which is why it renders yellow-green |
-| MRT1 | Albedo, with data in alpha | VERIFIED as albedo; alpha varies (1.0 sand, 0.62 rock, 0.94 character) but its meaning is unconfirmed |
-| MRT2 | Packed material data | INFERRED — G sits pinned at 0.498 (=127/255) across every sample |
-| MRT3 | Motion vectors | VERIFIED as all-zero, consistent with a static camera; the buffer's existence is what feeds TAA |
-| MRT4 | Packed material data | INFERRED |
+| MRT0 | Encoded normals, 2-channel | **VERIFIED** — B is exactly 0.0 and A exactly 1.0 at every sampled pixel in both captures; only R and G vary, which is why it renders yellow-green |
+| MRT1 | Albedo, with data in alpha | **VERIFIED** as albedo; alpha varies per material (1.00 / 0.85 / 0.96 across character, stone, dirt) but its meaning is unconfirmed |
+| MRT2 | Per-material scalar parameters | **PARTIAL** — G is pinned at exactly 0.498 (127/255) in *every* sample across both captures, so it is either unused or a signed zero. R varies with surface (0.95 stone, 0.95 dirt, 0.64 foliage), which reads like roughness. B is 0 except on some characters |
+| MRT3 | Motion vectors | **VERIFIED** — see below |
+| MRT4 | Per-material colour parameter | **INFERRED** — white (1,1,1,1) on stone, dirt and characters; strongly coloured on vegetation (foliage samples 0.37, 0.56, 0.03). Reads like a translucency or transmission tint with white as the opaque default, though the vivid per-object colours on rocks in the beach capture argue for something more like a material tint |
 
-> TODO: pixel-debug a G-buffer draw and trace the writes to resolve MRT2 and MRT4.
+### The second capture confirms MRT3
+
+In the Ravaged Beach frame MRT3 is all zeros, which I put down to a static camera. That was
+consistent with motion vectors but didn't prove them — an unused buffer looks identical.
+
+The Grove settles it. The camera is static there too, yet MRT3 is **not** empty: it has
+motion precisely on the **wind-animated foliage** — blue across the tree canopy, purple on
+individual plants — and nowhere else. Vegetation is the only thing in the scene that moves
+while the camera doesn't. That is motion vectors, and it is what feeds the TAA in this
+capture's name.
+
+> TODO: MRT2's B/A channels and MRT4's exact meaning still need a shader trace to confirm.
 
 ![G-buffer normals](/img/blog/bg3/07-gbuffer-mrt0-normals.png)
 *MRT0 — two-channel encoded normals. The green-yellow cast is the empty blue channel.*
@@ -650,6 +678,75 @@ UniformConstant Image<float, 2D>[40]* _17 : [[DescriptorSet(1), Binding(8)]];
 Forty possible surface types with three texture maps each — of which five were present in
 this frame. Note these are **fixed-size** arrays, not unbounded ones; more on that
 distinction below.
+
+## A Second Capture
+
+**Status: VERIFIED**
+
+Everything above comes from one frame, which is a weakness: you cannot tell an
+architectural property from a coincidence of one scene. So I took a second capture in a
+deliberately different place — the **Emerald Grove**, dense with foliage, water and a
+four-person party, instead of open sand with a single character.
+
+![The second capture](/img/blog/bg3/00-final-frame-grove.png)
+*The second analysed frame: Emerald Grove, Sacred Pool.*
+
+The scene-dependent numbers move a great deal:
+
+| | Ravaged Beach | Emerald Grove |
+|---|---|---|
+| Draw calls | 2,601 | **3,723** |
+| Total dispatches | 78 | **139** |
+| Skinning dispatches | 48 | **110** |
+| Visible geometry | 2.62M tris | **4.65M tris** |
+| Shadow geometry | 9.4M tris | **7.12M tris** |
+
+Note that the Grove has **more visible geometry but fewer shadow triangles**. It's an
+enclosed space, so the cascades cover far less distant terrain — the beach's open vista is
+what made its shadow cost so lopsided.
+
+The structural numbers do not move at all:
+
+| | Ravaged Beach | Emerald Grove |
+|---|---|---|
+| Resolution | 2560×1440 | 2560×1440 |
+| G-buffer attachments | 6 | 6 |
+| Fill Stencil draws | 5, refs 1/2/4/8/16 | **5, refs 1/2/4/8/16** |
+| Half-res chain | 19 draws @ 1280×720 | **19 draws @ 1280×720** |
+| Lighting shader variations | 14 indirect dispatches | **14 indirect dispatches** |
+| Lighting block | 21 dispatches | **21 dispatches** |
+| Post-processing block | 3 dispatches | **3 dispatches** |
+| Terrain patch | 49,152 indices | **49,152 indices** |
+
+The terrain figure is the one I'd point at. A completely different landscape, different
+patch counts, different instance counts per draw — and the index count per patch is
+identical to the byte, because the patch mesh is a fixed template and only the heightfield
+changes. Likewise the Fill Stencil pass runs its five draws in the Grove, where little or
+nothing is fading, confirming that the Vulkan fallback is paid unconditionally every frame.
+
+### One tile short
+
+The tile-classified lighting gave the sharpest result. Fourteen indirect dispatches again,
+and the group counts are:
+
+```
+48763, 2, 14, 650, 160, 8, 42, 115, 7551, 22, 102, 0, 0, 170
+```
+
+That sums to **57,599**. The screen is 57,600 tiles. In the beach frame the counts summed
+to exactly 57,600 — a perfect partition. Here, **exactly one tile is unaccounted for**.
+
+I don't yet know why. A single tile needing more shading models than any of the 14
+combinations covers would explain it, as would a tile that needs no shading at all. It is
+too precise to be noise, and it is the kind of detail a single capture could never have
+surfaced.
+
+The distribution also shifts hard. On the beach one variation covered 95.7% of the screen.
+In the Grove the largest covers 84.7% and a second takes 13.1%, with only two variations
+idle instead of six — exactly what you'd expect when sand and rock give way to foliage,
+water, skin and stone.
+
+> TODO: identify the missing tile.
 
 ## A DirectX 11 Renderer Speaking Vulkan
 

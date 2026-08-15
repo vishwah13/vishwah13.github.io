@@ -169,7 +169,62 @@ Worth re-checking against a DX11 capture if one is ever taken: D3D11 has no
 `SV_StencilRef` either (it arrived in D3D11.3/12), so both shipped backends may be on the
 fallback.
 
+## Second capture
+
+`Capture_2_Vulkan_TAA.rdc` (3.03 GB) — **Emerald Grove, Sacred Pool**. Dense foliage,
+water, four-person party, green volumetric. Deliberately chosen to contrast with the
+Ravaged Beach so architectural findings can be separated from scene coincidence.
+
+4067 events, 3723 draws, 139 dispatches, 2560×1440. G-buffer pass is EID 3661–7029.
+
+**Invariants that held** (strong evidence these are architectural):
+
+| Property | Beach | Grove |
+|---|---|---|
+| G-buffer attachments | 6 | 6 |
+| Fill Stencil | 5 draws, refs 1/2/4/8/16 | identical |
+| Half-res chain | 19 draws @ 1280×720 | identical |
+| Lighting variations | 14 indirect dispatches | 14 |
+| Lighting / post blocks | 21 / 3 dispatches | 21 / 3 |
+| Terrain patch | 49152 indices | 49152 |
+
+**Scene-dependent:** draws 2601→3723, dispatches 78→139, skinning 48→110, visible geometry
+2.62M→4.65M tris, shadow geometry 9.4M→7.12M (Grove is enclosed, cascades cover less
+distant terrain).
+
+**New open question — the missing tile.** Grove indirect group counts
+`48763, 2, 14, 650, 160, 8, 42, 115, 7551, 22, 102, 0, 0, 170` sum to **57599**, one short
+of the 57600 on-screen 8×8 tiles. The beach frame partitioned exactly. Too precise to be
+noise. Candidate explanations: a tile needing more shading models than any of the 14
+combinations covers, or a tile needing none.
+
+**Also weakened:** the 8192² atlas inference. In the Grove the equivalent
+`vkCmdBeginRenderPass(Load)` pass is 12 draws / 112 tris at **1280×720**, not 8192². The
+draw and triangle counts match the beach's 13 draws / 109 tris, but the target size does
+not. Downgrade any claim that this is a fixed glyph atlas.
+
 ## Corrections
+
+**2026-08-15 — G-buffer contact sheets were alpha-composited and misled me.** Every
+G-buffer target stores data in alpha, and on MRT2 that alpha is 0.031 (8/255) across most
+of the screen. Compositing with `Graphics.DrawImage` blended the RGB toward black, so MRT2
+appeared "black except the characters" and was read as an emissive/skin mask. It is
+nothing of the kind — its RGB is bright almost everywhere (R ≈ 0.95 on stone). `pick-pixel`
+and the exported PNG agreed exactly all along; only the *sheet* was wrong.
+
+Fixed by forcing alpha to 1 via a `ColorMatrix` when compositing, and by republishing the
+affected images (`07-gbuffer-sheet`, `07-gbuffer-mrt0-normals`, `07-gbuffer-mrt1-albedo`).
+The same trap applies in the browser: a PNG with low alpha displayed on a dark page is
+composited by the viewer. **All published buffer visualisations must be flattened to
+opaque.** MRT1's alpha is below 1 on many materials, so it was affected too.
+
+Lesson: when a numeric sample and a visualisation disagree, suspect the visualisation
+first — it has more machinery between the data and the eye.
+
+**2026-08-15 — MRT3 is confirmed motion vectors.** Previously "VERIFIED as all-zero,
+consistent with a static camera", which was weak: an unused buffer is also all-zero. The
+Grove has a static camera too but MRT3 is *not* empty there — motion appears exactly on
+wind-animated foliage and nowhere else. That is a positive confirmation.
 
 **2026-08-07 — the 14 indirect dispatches are lighting, not VFX.** Originally described as
 "GPU-driven effects / VFX simulation" on the basis of position in the frame and varying
