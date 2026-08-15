@@ -58,9 +58,9 @@ Two things make BG3 harder to read than a typical sample:
 That last pair is the headline: **shadows cost roughly 3.6× more triangles than
 everything you can actually see.**
 
-## 1. GPU skinning prepass — EID 43–137
+## GPU Skinning
 
-**Status: VERIFIED**
+**Status: VERIFIED**  ·  EID 43–137
 
 The frame opens with 48 compute dispatches, all sharing pipeline `1662` — one shader
 run 48 times over different buffers. No textures are bound; the shader reads three
@@ -102,18 +102,18 @@ re-blend every skinned vertex eight times per frame — and the six shadow passe
 each pay for it while only needing depth. Doing it once up front eliminates seven
 redundant evaluations.
 
-## 2. Shadow map #1 — EID 148–330
+## The First Shadow Map
 
-**Status: PARTIAL**
+**Status: PARTIAL**  ·  EID 148–330
 
 37 draws, 712K triangles, into a 2048×2048 depth-only target. The dimensions are
 confirmed; which light it belongs to is not.
 
 > TODO: identify the light source and compare its projection to the five cascades.
 
-## 3. The 8192² atlas — EID 333–340
+## An 8192² Atlas
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 333–340
 
 One draw into an **8192×8192** target, with twelve more arriving late in the frame
 (EID 12835–12916) totalling 109 triangles across 13 draws. Quad-sized geometry into a
@@ -122,15 +122,15 @@ very large atlas, immediately before the HUD pass.
 > TODO: confirm contents. Position and geometry suggest a glyph or UI atlas, but this
 > has not been verified.
 
-## 4. Early compute — EID 347–356
+## Early Compute
 
-**Status: TODO**
+**Status: TODO**  ·  EID 347–356
 
 > TODO: not yet investigated.
 
-## 5. Fill Stencil pass — EID 361–379
+## Fill Stencil Pass
 
-**Status: VERIFIED**
+**Status: VERIFIED**  ·  EID 361–379
 
 Five draws, one triangle each, into a depth-stencil target. Every one of them uses the
 same stencil configuration:
@@ -154,11 +154,11 @@ What varies is the reference value and write mask:
 sets bit 0; the next four OR in a single bit each.
 
 This is the setup pass for BG3's **opaque object fading** system, and it is the more
-interesting of the two ways Larian implemented it. See the dedicated section below.
+interesting of the two ways Larian implemented it. See **Fading Opaque Objects** below.
 
-## 6. Z-prepass — EID 382–2339
+## Depth Pre-pass
 
-**Status: VERIFIED**
+**Status: VERIFIED**  ·  EID 382–2339
 
 393 draws, 2.62M triangles, writing depth only at 2560×1440 — no colour attachment.
 
@@ -166,9 +166,9 @@ The giveaway that this is a prepass rather than a shadow render is that the *nex
 pass draws the same geometry: triangle counts 94120, 42014 and 21005 appear in both,
 in the same order. BG3 lays down depth first, then shades.
 
-## 7. G-buffer — EID 2344–4351
+## G-Buffer
 
-**Status: PARTIAL**
+**Status: PARTIAL**  ·  EID 2344–4351
 
 394 draws, 2.62M triangles, into **six attachments** — five `float4` colour targets
 plus depth, all at 2560×1440. The fragment shader confirms it:
@@ -200,9 +200,9 @@ Output float4* _11 : [[Location(4)]];
 ![G-buffer albedo](/img/blog/bg3/07-gbuffer-mrt1-albedo.png)
 *MRT1 — albedo, unlit.*
 
-## 8. Decals — EID 4387–4531
+## Decals
 
-**Status: VERIFIED**
+**Status: VERIFIED**  ·  EID 4387–4531
 
 45 draws that write back into the G-buffer, and they split cleanly into two completely
 different systems:
@@ -210,34 +210,34 @@ different systems:
 - **40 draws of 12 triangles** — `numIndices: 36`, i.e. a box. Conventional deferred decal
   volumes.
 - **5 draws of 28,800 triangles** — a screen-space tile mesh. These are gameplay surfaces,
-  and they get their own section below.
+  and they get their own section, **Gameplay Surfaces**, below.
 
-## 9. Mid passes — EID 4586–4776
+## Mid Passes
 
-**Status: TODO**
+**Status: TODO**  ·  EID 4586–4776
 
 > TODO: not yet investigated.
 
-## 10. Two-attachment geometry pass — EID 4790–5566
+## A Two-Attachment Geometry Pass
 
-**Status: TODO**
+**Status: TODO**  ·  EID 4790–5566
 
 132 draws, 529K triangles, 2560×1440, two attachments.
 
 > TODO: not yet investigated.
 
-## 11. Half-resolution chain — EID 5574–5632
+## Half-Resolution Chain
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 5574–5632
 
 A series of single-draw fullscreen passes at **1280×720** — exactly half resolution —
 with four attachments. One of them produces a full-red single-channel buffer.
 
 > TODO: confirm whether this is ambient occlusion and identify the other stages.
 
-## 12. Five shadow cascades — EID 5640–11970
+## Shadow Cascades
 
-**Status: PARTIAL**
+**Status: PARTIAL**  ·  EID 5640–11970
 
 The largest block of work in the frame: five depth-only passes, every one 2048×2048,
 totalling 1323 draws and roughly 9.4M triangles.
@@ -248,23 +248,22 @@ totalling 1323 draws and roughly 9.4M triangles.
 Draw counts climb across the cascades (153, 280, 375, 434, 81), consistent with
 progressively larger world-space coverage. The three heaviest draws in the entire
 frame — 229,376, 180,224 and 163,840 triangles — are all in these passes, and they are
-instanced terrain draws of 14, 11 and 10 patches respectively. See the Terrain 2.0
-section below.
+instanced terrain draws of 14, 11 and 10 patches respectively. See **Terrain** below.
 
 > TODO: extract the cascade projection matrices and confirm the split distances.
 
-## 13. Shadow mask resolve — EID 11982–11990
+## Shadow Mask Resolve
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 11982–11990
 
 ![Screen-space shadow mask](/img/blog/bg3/13-shadow-mask.png)
 *Red where lit, black where shadowed — the cascades resolved into screen space.*
 
 > TODO: confirm the resolve shader and how the cascades are selected per pixel.
 
-## 14. Tile-classified clustered lighting — EID 11998–12119
+## Tile-Classified Clustered Lighting
 
-**Status: VERIFIED**
+**Status: VERIFIED**  ·  EID 11998–12119
 
 This is my favourite thing in the frame, and I had it wrong at first — I assumed the
 indirect dispatches here were VFX simulation. They're the lighting.
@@ -324,29 +323,30 @@ knows about the one model it needs.
 > GPU with indirect dispatch, but every one of its 2601 draws is direct. Compute-side
 > indirect ports cleanly to DirectX 11; GPU-driven geometry submission does not.
 
-## 15. Lighting composite — EID 12126–12144
+## Lighting Composite
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 12126–12144
 
 The first fully lit image of the frame appears here.
 
 > TODO: not yet investigated in detail.
 
-## 16. Transparents and VFX — EID 12168–12550
+## Transparency and VFX
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 12168–12550
 
 53 draws. Fire and embers appear in the render target across this range.
 
 > TODO: not yet investigated in detail.
 
-## 17. Auto-exposure, bloom and tonemap — EID 12566–12702
+## Post Processing
 
-**Status: PARTIAL**
+**Status: PARTIAL**  ·  EID 12566–12702
 
 Three dispatches here, and they are not all post-processing:
 
-- **12566** — the **fade blending pass**, identified above. Not exposure or bloom.
+- **12566** — the **fade blending pass** (see **Fading Opaque Objects** below). Not
+  exposure or bloom.
 - **12572** — reads a texture, writes a storage buffer and a texture. Unidentified.
 - **12576** — reads a texture and writes two storage buffers, the shape of a luminance
   histogram reduction for auto-exposure.
@@ -359,35 +359,35 @@ in a graded image.
 
 > TODO: confirm the histogram, and separate the bloom mips from the tonemap.
 
-## 18. Late compute — EID 12709
+## Late Compute
 
-**Status: TODO**
+**Status: TODO**  ·  EID 12709
 
 > TODO: not yet investigated.
 
-## 19. UI atlas updates — EID 12835–12916
+## UI Atlas Updates
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 12835–12916
 
 Twelve quad draws into the 8192² target from section 3.
 
 > TODO: confirm contents.
 
-## 20. HUD — EID 12921–13412
+## UI
 
-**Status: INFERRED**
+**Status: INFERRED**  ·  EID 12921–13412
 
 109 draws composing the hotbar, portrait and minimap.
 
 > TODO: not yet investigated in detail.
 
-## 21. Present — EID 13420–13441
+## Present
 
-**Status: TODO**
+**Status: TODO**  ·  EID 13420–13441
 
 > TODO: not yet investigated.
 
-## Feature study: Terrain 2.0
+## Terrain
 
 **Status: VERIFIED (capture) / ATTRIBUTED (design rationale from Larian's GPC talk)**
 
@@ -471,7 +471,7 @@ sized to world extent rather than to powers of two, so it isn't exactly 484).
 > matching the documented four-layers-per-pixel maximum — but I have not confirmed the
 > grouping.
 
-## Feature study: fading opaque objects without visible dithering
+## Fading Opaque Objects
 
 **Status: VERIFIED (capture) / ATTRIBUTED (technique from Larian's GPC talk)**
 
@@ -559,7 +559,7 @@ stencil references and an unexplained compute dispatch. The talk alone doesn't t
 which path ships on Vulkan. Together they explain both the technique and why this backend
 takes the slower route.
 
-## Feature study: gameplay surfaces as screen-space tile meshes
+## Gameplay Surfaces
 
 **Status: VERIFIED (capture) / ATTRIBUTED (technique from Larian's GPC talk)**
 
@@ -651,7 +651,7 @@ Forty possible surface types with three texture maps each — of which five were
 this frame. Note these are **fixed-size** arrays, not unbounded ones; more on that
 distinction below.
 
-## Cross-cutting: a DirectX 11 renderer speaking Vulkan
+## A DirectX 11 Renderer Speaking Vulkan
 
 **Status: VERIFIED (capture findings) / ATTRIBUTED (Larian statements)**
 
@@ -794,13 +794,13 @@ Worth being clear about what is whose: the capture evidence above is mine, the s
 about Stadia and the engine team's timing are Larian's, and the argument connecting them
 is my interpretation, not something Larian has said.
 
-## Closing
+## Conclusion
 
 **Status: TODO**
 
 > TODO: write once the walkthrough is complete.
 
-## Sources
+## Reading Material and References
 
 Capture analysis is my own, performed with RenderDoc 1.45 and `rdc-cli`. External
 material, used only where attributed:
