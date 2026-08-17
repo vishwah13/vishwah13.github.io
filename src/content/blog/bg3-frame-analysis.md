@@ -122,11 +122,13 @@ corner contains depth. Every other pixel of the 4-megapixel target is uninitiali
 this scene there is a single local shadow-casting light, and it was allocated a small tile
 because it is distant and physically small on screen.
 
-Larian describe the system directly: shadows for local lights are packed as tiles into an
-atlas, with **tile size varying by on-screen size and distance**, up to 2K each (512 on low
-settings). Omni lights use a **tetrahedron shadow map** — four faces instead of a cube
-map's six — which fits one light into one tile and means fewer draws duplicated across face
-boundaries.
+Larian describe the system directly. It's **"Tile-based Omnidirectional Shadows"**
+[Doghramachi15] — shadows for local lights packed as tiles into an atlas, with **tile size
+varying by on-screen size and distance**, up to 2K per tile (512 on low settings). Omni
+lights use a **tetrahedron shadow map** — four faces instead of a cube map's six — which
+fits one light into one tile and means fewer draws duplicated across face boundaries.
+
+The atlas itself is **8K on High settings, 2048 on Low**.
 
 The payoff they cite is architectural: with all local shadows in one atlas, **every light
 can be shaded in the single clustered lighting pass**. Before, each shadow-casting light
@@ -138,14 +140,29 @@ geometry cost is set by what a light can see, not by the resolution you store it
 
 ## An 8192² Atlas
 
-**Status: INFERRED**  ·  EID 333–340
+**Status: PARTIAL**  ·  EID 333–340
 
 One draw into an **8192×8192** target, with twelve more arriving late in the frame
-(EID 12835–12916) totalling 109 triangles across 13 draws. Quad-sized geometry into a
-very large atlas, immediately before the HUD pass.
+(EID 12835–12916) — 109 triangles across 13 draws in total. Quad-sized geometry into a very
+large surface.
 
-> TODO: confirm contents. Position and geometry suggest a glyph or UI atlas, but this
-> has not been verified.
+I originally guessed this was a glyph or UI atlas, on the strength of its size and the
+position of the later draws near the HUD. The capture says otherwise. There is exactly one
+8192×8192 texture in the whole frame and its format is **`R16_UNORM`** — a single channel
+of 16-bit normalised data. That is shadow-distance storage. A text or UI atlas would be
+`R8` or a colour format with alpha.
+
+It also lines up with the size Larian give for the shadow atlas: **8K on High**. And the
+first of these draws lands at EID 333, immediately after the shadow atlas pass at 148–330
+finishes — the shape of a rendered tile being blitted into the atlas proper.
+
+> INFERRED: the format and timing both point at the shadow atlas, but I have not traced
+> what the 12 late draws at EID 12835–12916 are doing, and writing to a shadow atlas that
+> late in the frame is odd unless it is preparation for the next one.
+
+Worth a footnote: the largest texture in the capture is **32688 × 26352**, `BC3_UNORM`,
+861 megapixels of compressed data. Non-power-of-two at that scale is the signature of a
+packed virtual-texture or asset atlas.
 
 ## Early Compute — Light Clustering
 
