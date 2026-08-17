@@ -126,11 +126,36 @@ very large atlas, immediately before the HUD pass.
 > TODO: confirm contents. Position and geometry suggest a glyph or UI atlas, but this
 > has not been verified.
 
-## Early Compute
+## Early Compute — Light Clustering
 
-**Status: TODO**  ·  EID 347–356
+**Status: VERIFIED**  ·  EID 347–356
 
-> TODO: not yet investigated.
+A single dispatch, and the only **3D** workgroup in the frame:
+
+```
+ExecutionMode LocalSize(4, 4, 4)      <- 64 threads, arranged 3-dimensionally
+dispatch dimensions (9, 5, 12)
+```
+
+`9×4 = 36`, `5×4 = 20`, `12×4 = 48` — a **36 × 20 × 48 grid**. Against a 2560×1440 screen
+that's roughly **72×72 pixel tiles with 48 depth slices**. It binds seven read-write storage
+buffers and no textures at all.
+
+A 3D grid over the view frustum, filled with buffer writes, running before any geometry is
+drawn, is light clustering — assigning lights to froxels so the shading pass can look up
+only the lights affecting each cluster. Larian call the technique "our clustered lighting",
+and this is where the clusters get built.
+
+The capture also carries the volume textures such a renderer needs:
+
+| Volume | Reading |
+|---|---|
+| **285 × 160 × 128** | 2560/285 ≈ 9 px, 1440/160 = 9 px — a **9×9 pixel froxel grid with 128 depth slices**, the classic shape for volumetric fog |
+| 64×64×128, 64×64×64 | smaller volumes, likely fog scattering / integration steps |
+| 32×32×32, 256×128×32 | small lookup volumes |
+
+So there are *two* separate 3D grids in play: a coarse 36×20×48 one for light clustering,
+and a fine 285×160×128 one for volumetrics.
 
 ## Fill Stencil Pass
 
@@ -274,19 +299,44 @@ different systems:
 - **5 draws of 28,800 triangles** — a screen-space tile mesh. These are gameplay surfaces,
   and they get their own section, **Gameplay Surfaces**, below.
 
-## Mid Passes
+## Mid Passes — Emissive
 
-**Status: TODO**  ·  EID 4586–4776
+**Status: PARTIAL**  ·  EID 4586–4776
 
-> TODO: not yet investigated.
+39 draws of small props (6,240 / 3,392 / 1,024 / 847 triangles) followed by 5 larger ones.
+Exporting the render target at the end of the block shows an almost entirely black image
+scattered with **orange embers and fire**, matching the burning wreckage in the scene.
+
+This is emissive accumulation — geometry rasterized so that self-illuminating materials can
+write their contribution, with everything non-emissive staying black.
+
+> INFERRED: the emissive reading comes from the render target's appearance and the draw
+> sizes; I have not confirmed it against the shader.
 
 ## A Two-Attachment Geometry Pass
 
-**Status: TODO**  ·  EID 4790–5566
+**Status: PARTIAL**  ·  EID 4790–5566
 
-132 draws, 529K triangles, 2560×1440, two attachments.
+132 draws, 529K triangles, 2560×1440, two attachments (one colour plus depth), with the
+colour attachment declared `Don't Care`.
 
-> TODO: not yet investigated.
+The interesting part is *what* it draws. The pass opens with a single fullscreen triangle,
+then renders meshes of **94,120 / 42,014 / 21,005** triangles — the exact same counts, in
+the same order, as the Depth Pre-pass and the G-Buffer. This is the third time this frame
+that the same major scene geometry is submitted.
+
+The output is almost entirely black, with faint red and green glow on vegetation at the
+edge of frame. Combined with the pass above, that points at self-illumination: you have to
+rasterize the geometry to find out where the emissive pixels are, even though most surfaces
+contribute nothing.
+
+Counting the Depth Pre-pass, the G-Buffer and this, the heaviest meshes in the scene are
+transformed three times before a single light is evaluated — and then again for each of the
+six shadow maps.
+
+> INFERRED: the emissive interpretation is from the render target and the repeated draw
+> signature. The shader has not been traced, and a velocity or distortion pass would look
+> similar from the outside.
 
 ## Half-Resolution Chain
 
@@ -421,11 +471,26 @@ in a graded image.
 
 > TODO: confirm the histogram, and separate the bloom mips from the tonemap.
 
-## Late Compute
+## Late Compute — Upsample and Composite
 
-**Status: TODO**  ·  EID 12709
+**Status: PARTIAL**  ·  EID 12709
 
-> TODO: not yet investigated.
+```
+ExecutionMode LocalSize(64, 1, 1)
+dispatch dimensions (160, 90, 1)
+inputs   2560×1440  and  320×180
+output   2560×1440
+```
+
+`160 × 90` is the same 16×16 pixel tile grid the surface-decal system uses — 2560/16 and
+1440/16 — with 64 threads per group covering the tile's 256 pixels four at a time.
+
+The signature is a **⅛-resolution image combined with a full-resolution one**: 320×180 is
+exactly 2560/8 by 1440/8. That is an upsample-and-composite, the standard way a bloom or a
+half/quarter-res effect gets folded back into the full-resolution image.
+
+> INFERRED: the shape is unambiguous but which effect is being composited is not. Bloom is
+> the most likely candidate given its position after the tonemap chain.
 
 ## UI Atlas Updates
 
@@ -445,9 +510,16 @@ Twelve quad draws into the 8192² target from section 3.
 
 ## Present
 
-**Status: TODO**  ·  EID 13420–13441
+**Status: PARTIAL**  ·  EID 13420–13441
 
-> TODO: not yet investigated.
+The frame closes with a single compute dispatch reading one texture and writing another,
+then a one-draw pass. The render target at EID 13441 is the finished image — scene, HUD,
+minimap and hotbar composited together, exactly what reaches the screen.
+
+![The completed frame](/img/blog/bg3/00-final-frame.png)
+*EID 13441 — the final presented image.*
+
+Thirteen thousand four hundred and forty-one events to get here.
 
 ## Terrain
 

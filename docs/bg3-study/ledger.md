@@ -28,14 +28,14 @@ analysis. Every claim in the post should be traceable to a row here.
 | 1 | GPU skinning | 43–137 | VERIFIED | `rdc pipeline 43/61/137` → all COMP_PIPE 1662; `rdc snapshot 43` shader_cs.txt: `LocalSize(64,1,1)`, `float4x3` palette ArrayStride 48, 4×8-bit bone index unpack, weighted matrix sum, stride 20 | — |
 | 2 | Shadow map #1 | 148–330 | PARTIAL | `rdc snapshot 200` → depth 2048×2048. Light source unidentified | — |
 | 3 | 8192² atlas | 333–340 | INFERRED | `rdc stats` → `vkCmdBeginRenderPass(Load)` 13 draws, 109 tris, RT 8192×8192 | — |
-| 4 | Early compute | 347–356 | TODO | — | — |
+| 4 | **Light clustering** | 347–356 | **VERIFIED** | `LocalSize(4,4,4)` (only 3D workgroup in frame) × dispatch dims `(9,5,12)` = **36×20×48 froxel grid** (~72px tiles, 48 slices); 7 RW SSBOs, zero textures. Capture also holds a **285×160×128** volume = 9×9px froxels ×128 slices (volumetric fog), plus 64×64×128, 64×64×64, 32×32×32, 256×128×32 | — |
 | 5 | **Fill Stencil (object fading)** | 361–379 | **VERIFIED** | `rdc pipeline 364/368/371/374/377 stencil` → all func AlwaysTrue, pass op Replace; refs 1/2/4/8/16 with matching writeMasks = one draw per bit. Matches GPC talk's documented "separate draw per bit" fallback | — |
 | 6 | Z-prepass | 382–2339 | VERIFIED | `rdc snapshot 2000` → depth 2560×1440, no colour target; `rdc draws --pass` shows tri counts 94120/42014/21005 matching §7 | — |
 | 7 | G-buffer | 2344–4351 | PARTIAL | `rdc rt 4351 --target 0..4` all 2560×1440; `rdc stats` → 6 attachments; shader_ps.txt `Output Location(0..4)`; `rdc pick-pixel` → MRT0 B=0/A=1, MRT3 all-zero. **MRT2/MRT4 unresolved** | `07-gbuffer-sheet`, `07-gbuffer-mrt0-normals`, `07-gbuffer-mrt1-albedo` |
 | 8 | **Decals (two systems)** | 4387–4531 | **VERIFIED** | 45 draws = 40 box decals (`numIndices` 36 = cube, depthTest **on**) + 5 screen-space surface-tile draws (86400 indices each, depthTest **off**, shared VB 2247 + shared IB 746058 at firstIndex 0/86400/172800/259200/345600). 28800 tris = 160×90 tiles ×2 at 16×16 px on 2560×1440 | — |
 | 8a | **Surface tile index-gen compute** | 4382 | **VERIFIED** | `rdc snapshot 4382` → `LocalSize(16,16,1)` (one thread per tile pixel); 3× `Image<float,2D>[40]` surface-type arrays; 5 RO + 3 RW SSBOs, one being the generated index buffer | — |
-| 9 | Mid passes | 4586–4776 | TODO | — | — |
-| 10 | Two-attachment pass | 4790–5566 | TODO | `rdc stats` → 132 draws, 529324 tris, 2 attachments | — |
+| 9 | Emissive (small props) | 4586–4776 | **INFERRED** | 39 small draws (6240/3392/1024/847 tris) + 5 larger. `rdc rt 4776` = black with orange embers/fire matching scene. Shader not traced | — |
+| 10 | Emissive (scene geometry) | 4790–5566 | **INFERRED** | 132 draws, 529324 tris, 2 attachments, `C=Don't Care`. Opens with 1 fullscreen tri then meshes of **94120/42014/21005** — same counts, same order, as prepass and G-buffer, i.e. **3rd submission of the same geometry**. `rdc rt 5566` near-black with faint vegetation glow. Could also be velocity/distortion; shader not traced | — |
 | 11 | Half-res chain | 5574–5632 | INFERRED | `rdc stats` → `Don't Care` 19 draws @ 1280×720, 4 attachments; red buffer at 5590 | — |
 | 12 | 5 shadow cascades | 5640–11970 | PARTIAL | `rdc snapshot 6000/7000/8500/10500/11800` → all depth 2048×2048; draws 153/280/375/434/81. Projections not extracted | `12-shadow-cascade` |
 | 13 | Shadow mask resolve | 11982–11990 | INFERRED | `rdc rt 11990` red/black mask matching scene shadows | `13-shadow-mask` |
@@ -44,10 +44,10 @@ analysis. Every claim in the post should be traceable to a row here.
 | 16 | Transparents / VFX | 12168–12550 | INFERRED | `rdc rt 12550` fire/embers present | — |
 | 17a | **Fade blending compute** | 12566 | **VERIFIED** | `rdc snapshot 12566` → `LocalSize(16,16,1)`; set1 b0 `Image<float,2D>` (lit scene), b1 `Image<uint,2D>` (stencil), b2 `StorageImage<float,2D>` (out). Body: 16×16 tile origin, groupshared uint + float4 caches with +16 halo, bounded `< 4` neighbourhood loop. Matches GPC "Fade Blending pass: compute during post processing, input lit scene + stencil, 4×4 neighbourhood" | — |
 | 17b | Exposure/bloom/tonemap | 12572–12702 | PARTIAL | `rdc bindings 12576` → 1 RO texture + 2 RW SSBOs (histogram shape). 12572 unidentified. Bloom/tonemap split unconfirmed | `17-post-chain` |
-| 18 | Late compute | 12709 | TODO | `rdc bindings 12709` → mixed ps+cs, 2 RO + 1 RW | — |
+| 18 | Upsample + composite | 12709 | **PARTIAL** | `LocalSize(64,1,1)`, dispatch `(160,90,1)` = the same 16×16 tile grid as decals. Inputs **2560×1440 + 320×180** (exactly ⅛ res), output 2560×1440 → upsample-and-composite. Which effect is unconfirmed; bloom most likely given position after tonemap | — |
 | 19 | UI atlas | 12835–12916 | INFERRED | Same 8192² target as §3, 12 quad draws | — |
 | 20 | HUD | 12921–13412 | INFERRED | 109 draws, `rdc rt 13412` shows HUD | — |
-| 21 | Present | 13420–13441 | TODO | — | `00-final-frame` |
+| 21 | Present | 13420–13441 | **PARTIAL** | 1 compute dispatch (1 RO tex → 1 RW tex) then a 1-draw pass. `rdc rt 13441` = finished image with HUD. The dispatch's exact role unconfirmed | `00-final-frame` |
 
 ## Feature: Terrain 2.0 — VERIFIED
 
