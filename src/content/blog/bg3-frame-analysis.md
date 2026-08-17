@@ -101,19 +101,40 @@ Implementation details worth noting:
 
 **Why do it as a prepass at all?** The output buffer is later bound with
 `vkCmdBindVertexBuffers`, and this frame consumes that skinned geometry **eight times**:
-the Z-prepass, the G-buffer, and six shadow maps. Skinning in the vertex shader would
-re-blend every skinned vertex eight times per frame — and the six shadow passes would
-each pay for it while only needing depth. Doing it once up front eliminates seven
-redundant evaluations.
+the Z-prepass, the G-buffer, five shadow cascades and a shadow-atlas pass. Skinning in the
+vertex shader would re-blend every skinned vertex eight times per frame — and the six
+depth-only passes would each pay for it while needing nothing but position. Doing it once
+up front eliminates seven redundant evaluations.
 
 ## The First Shadow Map
 
 **Status: PARTIAL**  ·  EID 148–330
 
-37 draws, 712K triangles, into a 2048×2048 depth-only target. The dimensions are
-confirmed; which light it belongs to is not.
+37 draws, 712K triangles, into a 2048×2048 depth-only target — and this one is not a
+shadow map at all. It's a **shadow atlas**.
 
-> TODO: identify the light source and compare its projection to the five cascades.
+![The shadow atlas](/img/blog/bg3/02-shadow-atlas.png)
+*Left: the whole 2048² target at the end of the pass. Right: the top-left corner magnified.
+The repeating text is RenderDoc's `UNDEFINED IMG` pattern — memory that was never written.*
+
+At the end of the pass, exactly **one tile of roughly 128×128 pixels** in the top-left
+corner contains depth. Every other pixel of the 4-megapixel target is uninitialised. In
+this scene there is a single local shadow-casting light, and it was allocated a small tile
+because it is distant and physically small on screen.
+
+Larian describe the system directly: shadows for local lights are packed as tiles into an
+atlas, with **tile size varying by on-screen size and distance**, up to 2K each (512 on low
+settings). Omni lights use a **tetrahedron shadow map** — four faces instead of a cube
+map's six — which fits one light into one tile and means fewer draws duplicated across face
+boundaries.
+
+The payoff they cite is architectural: with all local shadows in one atlas, **every light
+can be shaded in the single clustered lighting pass**. Before, each shadow-casting light
+needed its own pass. It also lets the forward pass for alpha-blended objects reuse exactly
+the same lighting path.
+
+So this frame's 37 draws and 712K triangles are the cost of filling one 128px tile. Shadow
+geometry cost is set by what a light can see, not by the resolution you store it at.
 
 ## An 8192² Atlas
 
@@ -150,9 +171,14 @@ The capture also carries the volume textures such a renderer needs:
 
 | Volume | Reading |
 |---|---|
-| **285 × 160 × 128** | 2560/285 ≈ 9 px, 1440/160 = 9 px — a **9×9 pixel froxel grid with 128 depth slices**, the classic shape for volumetric fog |
+| **285 × 160 × 128** | 2560/285 ≈ 9 px, 1440/160 = 9 px — a **9×9 pixel froxel grid with 128 depth slices** |
 | 64×64×128, 64×64×64 | smaller volumes, likely fog scattering / integration steps |
 | 32×32×32, 256×128×32 | small lookup volumes |
+
+That 285×160×128 grid is volumetric fog, and Larian confirm the approach in as many words:
+**"Froxel based (frustum voxels)"**, with two global fog layers, local fog volumes, and
+artist controls for colour, density, height and noise. They also note it wasn't originally
+planned — it went in because quality wasn't good enough without it.
 
 So there are *two* separate 3D grids in play: a coarse 36×20×48 one for light clustering,
 and a fine 285×160×128 one for volumetrics.
@@ -332,7 +358,7 @@ contribute nothing.
 
 Counting the Depth Pre-pass, the G-Buffer and this, the heaviest meshes in the scene are
 transformed three times before a single light is evaluated — and then again for each of the
-six shadow maps.
+six depth-only passes.
 
 > INFERRED: the emissive interpretation is from the render target and the repeated draw
 > signature. The shader has not been traced, and a velocity or distortion pass would look

@@ -26,7 +26,7 @@ analysis. Every claim in the post should be traceable to a row here.
 | § | Pass | EID | Status | Evidence | Images |
 |---|---|---|---|---|---|
 | 1 | GPU skinning | 43–137 | VERIFIED | `rdc pipeline 43/61/137` → all COMP_PIPE 1662; `rdc snapshot 43` shader_cs.txt: `LocalSize(64,1,1)`, `float4x3` palette ArrayStride 48, 4×8-bit bone index unpack, weighted matrix sum, stride 20 | — |
-| 2 | Shadow map #1 | 148–330 | PARTIAL | `rdc snapshot 200` → depth 2048×2048. Light source unidentified | — |
+| 2 | **Shadow atlas (local lights)** | 148–330 | **VERIFIED** | `rdc snapshot 330` → 2048×2048 target with **only one ~128×128 tile occupied** (top-left); rest is RenderDoc `UNDEFINED IMG` = never written. Matches GPC talk: local-light shadows packed as tiles in an atlas, tile size by on-screen size/distance, max 2K (512 on low), tetrahedron maps (4 faces) for omni lights | `02-shadow-atlas` |
 | 3 | 8192² atlas | 333–340 | INFERRED | `rdc stats` → `vkCmdBeginRenderPass(Load)` 13 draws, 109 tris, RT 8192×8192 | — |
 | 4 | **Light clustering** | 347–356 | **VERIFIED** | `LocalSize(4,4,4)` (only 3D workgroup in frame) × dispatch dims `(9,5,12)` = **36×20×48 froxel grid** (~72px tiles, 48 slices); 7 RW SSBOs, zero textures. Capture also holds a **285×160×128** volume = 9×9px froxels ×128 slices (volumetric fog), plus 64×64×128, 64×64×64, 32×32×32, 256×128×32 | — |
 | 5 | **Fill Stencil (object fading)** | 361–379 | **VERIFIED** | `rdc pipeline 364/368/371/374/377 stencil` → all func AlwaysTrue, pass op Replace; refs 1/2/4/8/16 with matching writeMasks = one draw per bit. Matches GPC talk's documented "separate draw per bit" fallback | — |
@@ -124,12 +124,18 @@ talk and finding the arithmetic that proves it in the capture.
 
 ### Segments reviewed and verified
 
+**Note:** `Shadow_mapping.*` and `Volumetric Fog.png` sat unprocessed in the sources folder
+for a while before being noticed. Check the folder's newest files at the start of each
+session, not just the ones most recently mentioned.
+
 | Talk segment | Timestamp | Post section | What it gave us |
 |---|---|---|---|
 | Tile-based shading classification | ~20:50–21:15 | §14 | Resolved the 14 indirect dispatches; group counts sum to exactly 57600 = the 8×8 tile count. Corrected a wrong "VFX simulation" inference |
 | Terrain 2.0 | ~21:15–23:35 | Terrain 2.0 | Explained the three largest draws; 49152 indices = 16384 tris/patch = 64×64×4. Found the NaN hole hack in the shipped shader |
 | Fading opaque objects | ~34:30–38:30 | §5, §17a | Turned one TODO pass and one misfiled dispatch into two identified passes. Yielded the `VK_EXT_shader_stencil_export` synthesis |
 | Surface decal rendering | ~38:40–41:40 | §8, §8a | Resolved the decal pass completely; yielded the 16×16 tile size, which the talk does not state |
+| Shadow mapping | ~28:05–29:05 | Shadow atlas §2 | Local-light shadows are an **atlas of tiles**, not one map per light. Tetrahedron (4-face) maps for omni lights, tile size by screen size/distance, max 2K / 512 low. Enabled all lights to be shaded in the single clustered pass, and let the alpha-blended forward pass reuse the same lighting. **Corrected the post's "six shadow maps" claim** |
+| Volumetric fog | — | Early Compute | Confirms "froxel based (frustum voxels)" — matches the 285×160×128 volume found in the capture. 2 global fog layers, local fog volumes, controls for colour/density/height/noise. Not originally planned |
 
 ### Segments still to review
 
