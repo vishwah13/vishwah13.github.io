@@ -34,9 +34,9 @@ analysis. Every claim in the post should be traceable to a row here.
 | 7 | G-buffer | 2344–4351 | **PARTIAL (structure VERIFIED)** | `rdc rt 4351 --target 0..4` all 2560×1440; 6 attachments; shader `Output Location(0..4)`. **Shader-traced 2026-08-17:** MRT2 = 3 clamped scalars + **packed bitfield alpha** (`flag<<3 | (id&7)<<4`, then `*0.0039` = /255). MRT4 = **four quantities bit-packed across RGBA8 with fields straddling channel boundaries** — not a colour. MRT3 written as literal `{0,0,0,0}` in the static-geometry variant. Field *meanings* still unknown; only one shader variant traced | `07-gbuffer-sheet`, `-mrt0-normals`, `-mrt1-albedo`, `-sheet-grove`, `-sheet-cinematic` |
 | 8 | **Decals (two systems)** | 4387–4531 | **VERIFIED** | 45 draws = 40 box decals (`numIndices` 36 = cube, depthTest **on**) + 5 screen-space surface-tile draws (86400 indices each, depthTest **off**, shared VB 2247 + shared IB 746058 at firstIndex 0/86400/172800/259200/345600). 28800 tris = 160×90 tiles ×2 at 16×16 px on 2560×1440 | — |
 | 8a | **Surface tile index-gen compute** | 4382 | **VERIFIED** | `rdc snapshot 4382` → `LocalSize(16,16,1)` (one thread per tile pixel); 3× `Image<float,2D>[40]` surface-type arrays; 5 RO + 3 RW SSBOs, one being the generated index buffer | — |
-| 9 | Emissive (small props) | 4586–4776 | **INFERRED** | 39 small draws (6240/3392/1024/847 tris) + 5 larger. `rdc rt 4776` = black with orange embers/fire matching scene. Shader not traced | — |
-| 10 | Emissive (scene geometry) | 4790–5566 | **INFERRED** | 132 draws, 529324 tris, 2 attachments, `C=Don't Care`. Opens with 1 fullscreen tri then meshes of **94120/42014/21005** — same counts, same order, as prepass and G-buffer, i.e. **3rd submission of the same geometry**. `rdc rt 5566` near-black with faint vegetation glow. Could also be velocity/distortion; shader not traced | — |
-| 11 | Half-res chain | 5574–5632 | INFERRED | `rdc stats` → `Don't Care` 19 draws @ 1280×720, 4 attachments; red buffer at 5590 | — |
+| 9 | **Emissive** | 4586–4776 | **VERIFIED** | 39 small draws (6240/3392/1024/847 tris) + 5 larger. `rdc rt 4776` = black with orange embers/fire. **Shader (EID 4595):** single `float4`, `_120 = colour_uniform * intensity`, alpha hard-set 1.0 = emissive accumulation | — |
+| 10 | **Velocity (motion vectors)** | 4790–5566 | **VERIFIED** | 132 draws, 529324 tris, 2 attachments, `C=Don't Care`. Opens with 1 fullscreen tri then meshes of **94120/42014/21005** — same counts, same order, as prepass and G-buffer, i.e. **3rd submission of the same geometry**. **Shader (EID 4805) outputs `float2`, not float4:** `_163 = Fma(_151,_156,_162)` reprojected previous position, `_164 = _141 - _163` = current minus previous. Near-black because camera is static; faint red/green at frame edge = real velocity on wind-moved vegetation. **Corrects the earlier emissive guess** | — |
+| 11 | **SSAO** | 5574–5632 | **VERIFIED** | 19 draws @ 1280×720, 4 attachments. **Shader (EID 5590):** `Output float*` — single scalar (hence flat red); 3 sampled 2D images; bounded sampling loop with `Dot(_145,_145)` squared distance and `Dot(_157,_228)` normal·direction = screen-space ambient occlusion at half res | — |
 | 12 | 5 shadow cascades | 5640–11970 | PARTIAL | `rdc snapshot 6000/7000/8500/10500/11800` → all depth 2048×2048; draws 153/280/375/434/81. Projections not extracted | `12-shadow-cascade` |
 | 13 | Shadow mask resolve | 11982–11990 | INFERRED | `rdc rt 11990` red/black mask matching scene shadows | `13-shadow-mask` |
 | 14 | **Tile-classified clustered lighting** | 11998–12119 | **VERIFIED** | 14 `DispatchIndirect` = 14 documented shader variations. Group counts 55098/0/511/0/42/0/0/1222/690/6/31/0/0/0 **sum to 57600 = 320×180 tiles at 8×8 px on 2560×1440**. All lighting dispatches `LocalSize(8,8,1)` = one tile per workgroup. 11998 is `LocalSize(1,1,1)` indirect-args setup; 12004/12009/12016 are `LocalSize(8,8,1)` classification pre-passes. 38 vs 42 bound resources at 12031 vs 12066 confirms distinct variations | — |
@@ -252,6 +252,18 @@ fur) versus a thin-surface transmission tint (hide, cloth, and foliage in the Gr
 Needs a shader trace to confirm.
 
 ## Corrections
+
+**2026-08-17 — the two-attachment pass is velocity, not emissive.** Read as a second
+emissive pass because it re-renders the same meshes as the prepass/G-buffer and its output
+is near-black. Its shader outputs a **`float2`** computed as current-minus-reprojected
+position — motion vectors. Near-black because the camera is static. Two lessons repeating:
+the *output type* identifies a pass faster than its appearance, and "near-black" has many
+possible causes.
+
+**Open consequence:** with a dedicated velocity pass confirmed, the G-buffer's MRT3 needs
+re-examining. The static shader writes MRT3 as literal `{0,0,0,0}`, which rules out
+camera-motion velocity. Working reading: MRT3 = object-animation contribution, this pass =
+full screen-space vector including camera reprojection. Not yet confirmed.
 
 **2026-08-17 — MRT4 is not a colour; the "two translucency systems" reading was wrong.**
 Across two sessions I sampled MRT2/MRT4 across many materials and concluded MRT4 held a

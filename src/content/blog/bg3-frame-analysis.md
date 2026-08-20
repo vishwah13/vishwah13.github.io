@@ -375,51 +375,99 @@ different systems:
 
 ## Mid Passes — Emissive
 
-**Status: PARTIAL**  ·  EID 4586–4776
+**Status: VERIFIED**  ·  EID 4586–4776
 
 39 draws of small props (6,240 / 3,392 / 1,024 / 847 triangles) followed by 5 larger ones.
-Exporting the render target at the end of the block shows an almost entirely black image
-scattered with **orange embers and fire**, matching the burning wreckage in the scene.
+The render target at the end of the block is an almost entirely black image scattered with
+**orange embers and fire**, matching the burning wreckage in the scene.
 
-This is emissive accumulation — geometry rasterized so that self-illuminating materials can
-write their contribution, with everything non-emissive staying black.
+The shader confirms it. It emits a single `float4` built like this:
 
-> INFERRED: the emissive reading comes from the render target's appearance and the draw
-> sizes; I have not confirmed it against the shader.
+```
+_120 = _117 * _119        <- an emissive colour (float3 uniform) times an intensity scalar
+_121 = _120 * _115
+_122 = _121 * _61
+_126 = {_122.x, _122.y, _122.z, 1.0000}
+```
 
-## A Two-Attachment Geometry Pass
+A colour constant scaled by an intensity term, with alpha hard-set to 1.0. That is emissive
+accumulation — geometry rasterized so self-illuminating materials can deposit their
+contribution, everything else staying black.
 
-**Status: PARTIAL**  ·  EID 4790–5566
+## Velocity
 
-132 draws, 529K triangles, 2560×1440, two attachments (one colour plus depth), with the
-colour attachment declared `Don't Care`.
+**Status: VERIFIED**  ·  EID 4790–5566
 
-The interesting part is *what* it draws. The pass opens with a single fullscreen triangle,
-then renders meshes of **94,120 / 42,014 / 21,005** triangles — the exact same counts, in
-the same order, as the Depth Pre-pass and the G-Buffer. This is the third time this frame
-that the same major scene geometry is submitted.
+132 draws, 529K triangles, 2560×1440, two attachments (one colour plus depth).
 
-The output is almost entirely black, with faint red and green glow on vegetation at the
-edge of frame. Combined with the pass above, that points at self-illumination: you have to
-rasterize the geometry to find out where the emissive pixels are, even though most surfaces
-contribute nothing.
+I had this one wrong. Because the pass re-renders the same major meshes as the Depth
+Pre-pass and G-Buffer — **94,120 / 42,014 / 21,005** triangles, same counts, same order —
+and because its output is near-black with only a faint red-green glow at the edge of frame,
+I read it as a second emissive pass.
 
-Counting the Depth Pre-pass, the G-Buffer and this, the heaviest meshes in the scene are
-transformed three times before a single light is evaluated — and then again for each of the
-six depth-only passes.
+The shader says otherwise. Its output is not a `float4` colour but a **`float2`**:
 
-> INFERRED: the emissive interpretation is from the render target and the repeated draw
-> signature. The shader has not been traced, and a velocity or distortion pass would look
-> similar from the outside.
+```
+_162 = {_158, -_160}            <- a jitter offset, Y negated
+_163 = Fma(_151, _156, _162)    <- the reprojected previous-frame position
+_164 = _141 - _163              <- current position MINUS previous position
+*_7  = _164
+```
 
-## Half-Resolution Chain
+A difference of two screen-space positions is a **motion vector**. This is a dedicated
+velocity pass, and the reason it looks black is the same reason MRT3 does: the camera is
+static, so static geometry has no screen-space motion. The faint red and green at the frame
+edge is genuine velocity on wind-moved vegetation, `x` in red and `y` in green.
 
-**Status: INFERRED**  ·  EID 5574–5632
+That also explains why it must re-submit the whole scene. Velocity is a per-pixel quantity
+derived from geometry transforms; you cannot compute it without rasterizing the geometry
+again.
 
-A series of single-draw fullscreen passes at **1280×720** — exactly half resolution —
-with four attachments. One of them produces a full-red single-channel buffer.
+So the heaviest meshes in this frame are transformed **three times before a single light is
+evaluated** — Depth Pre-pass, G-Buffer, Velocity — and then once more for each of the six
+depth-only shadow passes.
 
-> TODO: confirm whether this is ambient occlusion and identify the other stages.
+### This complicates the MRT3 story
+
+If there is a dedicated velocity pass, what is the G-buffer's MRT3 doing? The static
+G-buffer shader writes it as a literal `{0,0,0,0}`, which rules out camera-motion velocity —
+a moving camera gives static geometry non-zero screen velocity, so a camera-aware buffer
+could not hard-code zero.
+
+The most consistent reading is that **MRT3 carries the object-animation contribution**
+(zero by construction for static meshes, vivid on the animating characters in the cinematic
+capture) while **this pass produces the full screen-space vector including camera
+reprojection**. Both are motion; they are not the same quantity.
+
+> TODO: confirm by tracing a skinned material's G-buffer shader and comparing what it
+> writes to MRT3 against what this pass computes for the same pixel.
+
+## Half-Resolution Chain — Ambient Occlusion
+
+**Status: VERIFIED**  ·  EID 5574–5632
+
+A series of single-draw fullscreen passes at **1280×720** — exactly half resolution — with
+four attachments. One of them produces a buffer that renders as flat red.
+
+Flat red because the output is a **single scalar**:
+
+```
+Output float* _4 : [[Location(0)]];
+```
+
+One channel, so only R carries data. The shader binds three sampled 2D images and runs a
+bounded sampling loop:
+
+```
+if(!_174) break;
+_146 = Dot(_145, _145)      <- squared distance to a sampled neighbour
+_229 = Dot(_228, _228)
+_230 = Dot(_157, _228)      <- surface normal against the sample direction
+```
+
+Sampling neighbours in a loop, weighting each by squared distance and by the dot product
+against the surface normal, accumulating one scalar — that is screen-space **ambient
+occlusion**, computed at quarter the pixel cost and later upsampled.
 
 ## Shadow Cascades
 
