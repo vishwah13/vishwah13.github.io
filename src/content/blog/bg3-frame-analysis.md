@@ -604,13 +604,62 @@ The first fully lit image of the frame appears here.
 
 > TODO: not yet investigated in detail.
 
+## Volumetric Fog
+
+**Status: VERIFIED**  ·  volume written EID 12114–12119
+
+Larian call this **"perhaps the most impactful change that we made visually"** — and it was
+not initially planned. It went in late, because they felt the quality "was just not good
+enough yet" without it.
+
+What shipped is **froxel based** (frustum voxels), with **two global fog layers**, support
+for **local fog volumes**, and artist controls for colour, density, height and noise.
+
+The capture shows the grid. There is a **285 × 160 × 128** volume, and against a 2560×1440
+screen that works out to:
+
+```
+2560 / 285 = 9.0 px      1440 / 160 = 9.0 px      128 depth slices
+```
+
+**9 × 9 pixel froxels across 128 slices through the view frustum.** Usage tracing shows the
+full lifecycle: written at the end of the lighting block (EID 12114–12119), then read by the
+scene composite and by every transparent draw through to EID 12550.
+
+### Why it mattered so much
+
+The system it replaced was ordinary depth-based fog, and Larian are blunt about its
+limits — scenes looked flat, and pushing the fog forward to add depth "quickly drowns out
+all the lighting". A depth-based fog is a function of distance alone; it cannot know that
+there is a fire to your left or a lit window behind a building.
+
+A froxel volume can. Because it stores in-scattered light per cell, you can **see where the
+lights are** — including lights whose sources are hidden behind geometry. Larian's example
+is being able to feel the fire, and the blue glow of a tree, as volume in the air rather
+than as a flat wash over the image.
+
+That is also what makes the particle trick above possible. Once you have a volume that
+knows how much light reaches every point in the frustum, lighting the VFX is a lookup.
+
 ## Transparency and VFX
 
-**Status: INFERRED**  ·  EID 12168–12550
+**Status: VERIFIED**  ·  EID 12168–12550
 
-53 draws. Fire and embers appear in the render target across this range.
+53 draws. Fire and embers appear in the render target across this range — and the way they
+are lit is one of the neater economies in the frame.
 
-> TODO: not yet investigated in detail.
+Tracing which events read the **285 × 160 × 128** volumetric fog volume gives a clear
+answer: after being integrated at EID 12114–12119, it is sampled at **12179, 12188, 12197,
+12202, 12207 … 12528, 12536, 12545, 12550** — throughout this entire pass, draw after draw.
+
+The particles are being lit *by the fog*. Larian describe it as a **"free VFX lighting
+approximation"**: rather than evaluating lights per particle, they sample the **in-scatter
+luminance** already computed in the froxel volume and use that as the particle's lighting.
+The volume knows how much light is arriving at every point in the frustum, which is most of
+what a particle needs to know, and it has already been paid for.
+
+It is a good illustration of a general principle — the cheapest lighting is lighting you
+already computed for something else.
 
 ## Post Processing
 
