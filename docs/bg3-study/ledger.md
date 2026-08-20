@@ -5,6 +5,19 @@ Working document for `src/content/blog/bg3-frame-analysis.md`. **Not published.*
 Its job is to stop an early guess hardening into a stated fact over a multi-week
 analysis. Every claim in the post should be traceable to a row here.
 
+## Current state (2026-08-17)
+
+**Walkthrough complete.** 31 sections: **21 VERIFIED, 9 PARTIAL, 0 INFERRED, 0 TODO.**
+~10,200 words, 13 images. Conclusion written.
+
+Remaining before publication:
+1. **Editorial pass** — strip the `**Status:` scaffolding lines; rewrite any remaining
+   hedges into prose. Per the spec, INFERRED content stays but must read as inference.
+2. **Images** — the largest gap. ~23 sections have none, including Terrain, Fading,
+   Gameplay Surfaces, Tile-Classified Lighting, Light Clustering, GPU Skinning.
+3. Optional: remaining talk segments (cinematics, transparency, "other optimizations"
+   ~41:35), and the four open questions listed in the Conclusion.
+
 ## Status vocabulary
 
 | Status | Meaning |
