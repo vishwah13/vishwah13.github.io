@@ -779,9 +779,24 @@ for each group. These passes and the shadow-atlas pass share a signature, so the
 displayed one size — 8192×8192 — for a group containing targets from 1280×720 downward. A
 summary view had silently merged two unrelated systems.
 
-> INFERRED: a down-then-up blur pyramid immediately before the HUD is either a late bloom
-> or a blurred backdrop for translucent UI panels. I have not traced which pass consumes
-> the result.
+### It blurs the HUD, not the scene
+
+Exporting those targets settles what is being blurred. They are almost entirely
+uninitialised — RenderDoc's `UNDEFINED` pattern — with real content in only one region, and
+that content is unmistakable: the words **"Passives", "Custom", "Common", "Wizard",
+"Items"**, the coordinate readout, and the red hotbar highlight bars. These are HUD
+elements, blurred at 1280×720 and below, in a pass that runs *before* the HUD itself draws
+at EID 12921.
+
+So this is not scene bloom and not a backdrop blur. It is a **UI glow**: interface elements
+rendered into a buffer, blurred down and back up a pyramid, then available to composite
+underneath the crisp UI so icons and highlight bars bleed light. It also explains why so
+little of the target is ever written — only the corner of the screen where the hotbar lives
+needs it.
+
+> INFERRED: I have not traced the pass that consumes the blurred result, so "composited as
+> glow beneath the HUD" is the reading, not a confirmed fact. One level of the pyramid also
+> showed no UI content in the region I sampled, which the glow story does not explain.
 
 ## UI
 
