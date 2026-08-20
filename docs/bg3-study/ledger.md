@@ -37,6 +37,7 @@ analysis. Every claim in the post should be traceable to a row here.
 | 9 | **Emissive** | 4586–4776 | **VERIFIED** | 39 small draws (6240/3392/1024/847 tris) + 5 larger. `rdc rt 4776` = black with orange embers/fire. **Shader (EID 4595):** single `float4`, `_120 = colour_uniform * intensity`, alpha hard-set 1.0 = emissive accumulation | — |
 | 10 | **Velocity (motion vectors)** | 4790–5566 | **VERIFIED** | 132 draws, 529324 tris, 2 attachments, `C=Don't Care`. Opens with 1 fullscreen tri then meshes of **94120/42014/21005** — same counts, same order, as prepass and G-buffer, i.e. **3rd submission of the same geometry**. **Shader (EID 4805) outputs `float2`, not float4:** `_163 = Fma(_151,_156,_162)` reprojected previous position, `_164 = _141 - _163` = current minus previous. Near-black because camera is static; faint red/green at frame edge = real velocity on wind-moved vegetation. **Corrects the earlier emissive guess** | — |
 | 11 | **SSAO** | 5574–5632 | **VERIFIED** | 19 draws @ 1280×720, 4 attachments. **Shader (EID 5590):** `Output float*` — single scalar (hence flat red); 3 sampled 2D images; bounded sampling loop with `Dot(_145,_145)` squared distance and `Dot(_157,_228)` normal·direction = screen-space ambient occlusion at half res | — |
+| 11a | **Sky / atmosphere** | 4540–4581 | **PARTIAL** | **256×128×32** volume (classic atmospheric-scattering LUT dims) read at EID 4549 (1 fullscreen draw = sky), 4564 (dispatch writing a 64×64×128 volume), **all 14 lighting dispatches** 12031–12096, and transparents 12197–12212 — i.e. aerial perspective folded into every shading variation. Sky shader not traced; cloud coverage map not located |
 | 12 | 5 shadow cascades | 5640–11970 | PARTIAL | `rdc snapshot 6000/7000/8500/10500/11800` → all depth 2048×2048; draws 153/280/375/434/81. Projections not extracted | `12-shadow-cascade` |
 | 13 | Shadow mask resolve | 11982–11990 | INFERRED | `rdc rt 11990` red/black mask matching scene shadows | `13-shadow-mask` |
 | 14 | **Tile-classified clustered lighting** | 11998–12119 | **VERIFIED** | 14 `DispatchIndirect` = 14 documented shader variations. Group counts 55098/0/511/0/42/0/0/1222/690/6/31/0/0/0 **sum to 57600 = 320×180 tiles at 8×8 px on 2560×1440**. All lighting dispatches `LocalSize(8,8,1)` = one tile per workgroup. 11998 is `LocalSize(1,1,1)` indirect-args setup; 12004/12009/12016 are `LocalSize(8,8,1)` classification pre-passes. 38 vs 42 bound resources at 12031 vs 12066 confirms distinct variations | — |
@@ -48,6 +49,22 @@ analysis. Every claim in the post should be traceable to a row here.
 | 19 | UI atlas | 12835–12916 | INFERRED | Same 8192² target as §3, 12 quad draws | — |
 | 20 | HUD | 12921–13412 | INFERRED | 109 draws, `rdc rt 13412` shows HUD | — |
 | 21 | Present | 13420–13441 | **PARTIAL** | 1 compute dispatch (1 RO tex → 1 RW tex) then a 1-draw pass. `rdc rt 13441` = finished image with HUD. The dispatch's exact role unconfirmed | `00-final-frame` |
+
+## Texture inventory (capture 1)
+
+Established via `controller.GetUsage()` per resource:
+
+| Texture | Used at | Reading |
+|---|---|---|
+| 256×128×32 | 4549, 4564, 12031–12096 (all 14 lighting), 12197–12212 | Atmospheric scattering LUT — aerial perspective |
+| 285×160×128 | written 12114/12119, read 12157–12550 | Volumetric fog froxels: integrated at end of lighting, applied to scene and transparents |
+| 64×64×128 | written 4564 | Fog/scattering injection target |
+| 32×32×32 | 12694 | **Colour-grading LUT** (32³ is the standard size) |
+| 64×64×64 | 12702 | Second grading/post LUT |
+| 4×  4096×512 BC6_UFLOAT, 13 mips | 211, 1700, 3621, 4610, 5522, 6192 | HDR, many mips, sampled by scene shaders — IBL / environment probes (INFERRED) |
+| 8192×8192 R16_UNORM | 333–340, 12835–12916 | Shadow atlas (see §3) |
+| 32688×26352 BC3_UNORM | — | ~861 MP packed virtual-texture / asset atlas (INFERRED) |
+
 
 ## Feature: Terrain 2.0 — VERIFIED
 
@@ -135,6 +152,7 @@ session, not just the ones most recently mentioned.
 | Fading opaque objects | ~34:30–38:30 | §5, §17a | Turned one TODO pass and one misfiled dispatch into two identified passes. Yielded the `VK_EXT_shader_stencil_export` synthesis |
 | Surface decal rendering | ~38:40–41:40 | §8, §8a | Resolved the decal pass completely; yielded the 16×16 tile size, which the talk does not state |
 | Shadow mapping | ~28:05–29:05 | Shadow atlas §2, 8192² §3 | **"Tile-based Omnidirectional Shadows" [Doghramachi15]**. Atlas **8K High / 2048 Low**; tetrahedron (4-face) maps for omni lights, one light per tile; tile size by screen size/distance, max 2K / 512 low. Enabled all lights in the single clustered pass and the same lighting in the forward pass. **Corrected the "six shadow maps" claim and the 8192² glyph-atlas guess.** NOTE: the auto-transcript garbled the technique name as "Blended style based on the directional Shadows" — the *slide* had it. Always read the slide, not just the transcript |
+| Sky / clouds | ~30:25–31:20 | Sky, Atmosphere and Clouds | **No dynamic time of day** — the dynamic sky exists for *development* (avoids re-baking skydome textures on lighting changes). Atmospheric scattering, stars/moon, basic volumetric clouds, optional cloud shadows driven by an artist-**painted cloud coverage map** |
 | Volumetric fog | — | Early Compute | Confirms "froxel based (frustum voxels)" — matches the 285×160×128 volume found in the capture. 2 global fog layers, local fog volumes, controls for colour/density/height/noise. Not originally planned |
 
 ### Segments still to review

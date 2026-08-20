@@ -469,6 +469,45 @@ Sampling neighbours in a loop, weighting each by squared distance and by the dot
 against the surface normal, accumulating one scalar — that is screen-space **ambient
 occlusion**, computed at quarter the pixel cost and later upsampled.
 
+## Sky, Atmosphere and Clouds
+
+**Status: PARTIAL**  ·  EID 4540–4581
+
+Baldur's Gate 3 has **no dynamic time of day**. So why build a dynamic sky at all?
+
+Larian's answer is that it was **for development, not for the game**. A static skydome
+texture has to be re-baked every time an artist tweaks the lighting; a dynamic system means
+they don't. The player-facing case barely needs it — the camera mostly looks down, and in
+cinematics you rarely see sky. What shipped is deliberately modest: atmospheric scattering,
+stars and moon, and volumetric clouds they describe as "still quite a basic
+implementation".
+
+The capture backs this with a distinctive texture. There is a **256 × 128 × 32** volume —
+textbook dimensions for a precomputed atmospheric scattering lookup — and tracing its usage
+shows exactly where atmosphere gets applied:
+
+| Read at | What is happening |
+|---|---|
+| EID 4549 | a single fullscreen draw — the sky itself |
+| EID 4564 | a compute dispatch that writes a 64×64×128 volume |
+| EID 12031–12096 | **all fourteen** tile-classified lighting dispatches |
+| EID 12197–12212 | the transparent/VFX passes |
+
+Every lighting variation samples it, which is aerial perspective: distant surfaces need the
+atmosphere between them and the camera folded into their shading, not painted on afterwards.
+
+### Clouds cast shadows from a painted map
+
+The clouds can optionally cast shadows onto the world, driven by a **cloud coverage map
+that artists paint by hand** — choosing where shadow falls and where it doesn't, to get
+overcast atmospheres and shafts of light through gaps. It's a nice example of a system
+whose real purpose is art direction rather than simulation: not "where would clouds be" but
+"where does this scene want shade".
+
+> INFERRED: the 256×128×32 volume's identification as a scattering LUT comes from its
+> dimensions and usage pattern. I have not traced the sky shader itself, and the cloud
+> coverage map has not been located in the capture.
+
 ## Shadow Cascades
 
 **Status: PARTIAL**  ·  EID 5640–11970
@@ -587,6 +626,11 @@ Three dispatches here, and they are not all post-processing:
 
 Then a chain of single-draw fullscreen passes through the half-resolution targets, ending
 in a graded image.
+
+Two small 3D textures are consumed right at the end of that chain — a **32×32×32** at EID
+12694 and a **64×64×64** at 12702. A 32³ volume read during final post is the standard
+shape of a **colour-grading LUT**: the graded look is a lookup, not a formula, which is what
+lets artists author it in a colour tool and ship it as a texture.
 
 ![The post-processing chain](/img/blog/bg3/17-post-chain.png)
 *Render targets sampled across the back half of the frame.*
