@@ -13,8 +13,13 @@ analysis. Every claim in the post should be traceable to a row here.
 Remaining before publication:
 1. **Editorial pass** — strip the `**Status:` scaffolding lines; rewrite any remaining
    hedges into prose. Per the spec, INFERRED content stays but must read as inference.
-2. **Images** — the largest gap. ~23 sections have none, including Terrain, Fading,
-   Gameplay Surfaces, Tile-Classified Lighting, Light Clustering, GPU Skinning.
+2. **Images** — 19 published (35 MB). Added 2026-08-17: depth pre-pass, emissive, SSAO,
+   lighting composite, terrain wireframe, surface-tile wireframe figure. Still text-only:
+   GPU Skinning, Fill Stencil, Fading, Tile-Classified Lighting, Light Clustering, Sky,
+   Volumetric Fog, Velocity, Blur Pyramid, UI, DX11 section.
+   **Overlay technique:** `rdc rt EID --overlay wireframe|stencil|overdraw|nan|triangle-size`
+   works, but the overlay PNG is the wireframe colour on **alpha 0** — it must be
+   alpha-composited over a base image, not viewed directly.
 3. Optional: remaining talk segments (cinematics, transparency, "other optimizations"
    ~41:35), and the four open questions listed in the Conclusion.
 

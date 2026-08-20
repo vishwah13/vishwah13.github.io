@@ -241,6 +241,9 @@ The giveaway that this is a prepass rather than a shadow render is that the *nex
 pass draws the same geometry: triangle counts 94120, 42014 and 21005 appear in both,
 in the same order. BG3 lays down depth first, then shades.
 
+![The depth pre-pass result](/img/blog/bg3/06-depth-prepass.png)
+*The depth buffer at the end of the pre-pass — 2.62M triangles, position only.*
+
 ## G-Buffer
 
 **Status: PARTIAL**  ·  EID 2344–4351
@@ -397,6 +400,9 @@ A colour constant scaled by an intensity term, with alpha hard-set to 1.0. That 
 accumulation — geometry rasterized so self-illuminating materials can deposit their
 contribution, everything else staying black.
 
+![The emissive buffer](/img/blog/bg3/09-emissive.png)
+*Almost the entire frame contributes nothing. Only the burning wreckage writes here.*
+
 ## Velocity
 
 **Status: VERIFIED**  ·  EID 4790–5566
@@ -471,6 +477,9 @@ _230 = Dot(_157, _228)      <- surface normal against the sample direction
 Sampling neighbours in a loop, weighting each by squared distance and by the dot product
 against the surface normal, accumulating one scalar — that is screen-space **ambient
 occlusion**, computed at quarter the pixel cost and later upsampled.
+
+![The ambient occlusion buffer](/img/blog/bg3/11-ssao.png)
+*The AO buffer at 1280×720. It renders flat red because only the R channel carries data.*
 
 ## Sky, Atmosphere and Clouds
 
@@ -626,6 +635,9 @@ The scale is the striking part. Each declares **84 sampled 2D images** and perfo
 **52 texture samples**, with **no loops at all** — entirely unrolled. That is a gather:
 G-buffer targets, the shadow mask, ambient occlusion, the fog volume and the rest, combined
 in one pass rather than accumulated over many.
+
+![The first lit image](/img/blog/bg3/15-lighting-composite.png)
+*The frame's first lit image. Everything before this point was geometry and masks.*
 
 > INFERRED: the "big gather" reading follows from the binding count and sample count. I have
 > not identified which of the 84 inputs is which, so the exact composition is unconfirmed.
@@ -823,7 +835,11 @@ and only the instance count changes. That number decomposes exactly:
 ```
 
 Which is precisely the geometry Larian describe: a **64 m² patch at one vertex per metre**,
-with an **extra centre vertex** turning each quad into a four-triangle fan. In *Divinity:
+with an **extra centre vertex** turning each quad into a four-triangle fan.
+
+![Terrain wireframe over the scene](/img/blog/bg3/10-terrain-wireframe.png)
+*The terrain mesh drawn as wireframe over the frame. The centre-vertex fan is visible as an
+X through every cell — four triangles per quad, not two.* In *Divinity:
 Original Sin 2* terrain patches were one vertex every 2 m and each patch was **its own draw
 call**, with a further **unique draw call per painted material layer**, all alpha tested.
 BG3 collapses that to one instanced draw with per-instance culling.
@@ -1024,6 +1040,16 @@ So "an index buffer per surface type" is, concretely, one compute-generated buff
 contiguous per-type region — 432,000 indices for the five surface types active in this
 frame. Every draw always covers the full tile grid; the culling happens entirely through
 degenerate triangles.
+
+![Generated surface tiles](/img/blog/bg3/08-surface-tiles.png)
+*Wireframe of the tiles generated for one surface type. They exist only over the surface
+itself and nowhere else in the frame.*
+
+The culling is dramatic in practice. Rendering each of the five surface-type draws with a
+wireframe overlay, **four of them produce no visible geometry at all** — every one of their
+14,400 tiles collapsed to a degenerate triangle. The fifth covers roughly a 237×126 pixel
+region, about **120 tiles out of 14,400**. Four surface types cost nothing this frame beyond
+the draw call itself.
 
 ### The depth test really is gone
 
