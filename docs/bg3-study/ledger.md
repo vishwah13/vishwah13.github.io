@@ -31,7 +31,7 @@ analysis. Every claim in the post should be traceable to a row here.
 | 4 | **Light clustering** | 347–356 | **VERIFIED** | `LocalSize(4,4,4)` (only 3D workgroup in frame) × dispatch dims `(9,5,12)` = **36×20×48 froxel grid** (~72px tiles, 48 slices); 7 RW SSBOs, zero textures. Capture also holds a **285×160×128** volume = 9×9px froxels ×128 slices (volumetric fog), plus 64×64×128, 64×64×64, 32×32×32, 256×128×32 | — |
 | 5 | **Fill Stencil (object fading)** | 361–379 | **VERIFIED** | `rdc pipeline 364/368/371/374/377 stencil` → all func AlwaysTrue, pass op Replace; refs 1/2/4/8/16 with matching writeMasks = one draw per bit. Matches GPC talk's documented "separate draw per bit" fallback | — |
 | 6 | Z-prepass | 382–2339 | VERIFIED | `rdc snapshot 2000` → depth 2560×1440, no colour target; `rdc draws --pass` shows tri counts 94120/42014/21005 matching §7 | — |
-| 7 | G-buffer | 2344–4351 | PARTIAL | `rdc rt 4351 --target 0..4` all 2560×1440; `rdc stats` → 6 attachments; shader_ps.txt `Output Location(0..4)`; `rdc pick-pixel` → MRT0 B=0/A=1, MRT3 all-zero. **MRT2/MRT4 unresolved** | `07-gbuffer-sheet`, `07-gbuffer-mrt0-normals`, `07-gbuffer-mrt1-albedo` |
+| 7 | G-buffer | 2344–4351 | **PARTIAL (structure VERIFIED)** | `rdc rt 4351 --target 0..4` all 2560×1440; 6 attachments; shader `Output Location(0..4)`. **Shader-traced 2026-08-17:** MRT2 = 3 clamped scalars + **packed bitfield alpha** (`flag<<3 | (id&7)<<4`, then `*0.0039` = /255). MRT4 = **four quantities bit-packed across RGBA8 with fields straddling channel boundaries** — not a colour. MRT3 written as literal `{0,0,0,0}` in the static-geometry variant. Field *meanings* still unknown; only one shader variant traced | `07-gbuffer-sheet`, `-mrt0-normals`, `-mrt1-albedo`, `-sheet-grove`, `-sheet-cinematic` |
 | 8 | **Decals (two systems)** | 4387–4531 | **VERIFIED** | 45 draws = 40 box decals (`numIndices` 36 = cube, depthTest **on**) + 5 screen-space surface-tile draws (86400 indices each, depthTest **off**, shared VB 2247 + shared IB 746058 at firstIndex 0/86400/172800/259200/345600). 28800 tris = 160×90 tiles ×2 at 16×16 px on 2560×1440 | — |
 | 8a | **Surface tile index-gen compute** | 4382 | **VERIFIED** | `rdc snapshot 4382` → `LocalSize(16,16,1)` (one thread per tile pixel); 3× `Image<float,2D>[40]` surface-type arrays; 5 RO + 3 RW SSBOs, one being the generated index buffer | — |
 | 9 | Emissive (small props) | 4586–4776 | **INFERRED** | 39 small draws (6240/3392/1024/847 tris) + 5 larger. `rdc rt 4776` = black with orange embers/fire matching scene. Shader not traced | — |
@@ -252,6 +252,19 @@ fur) versus a thin-surface transmission tint (hide, cloth, and foliage in the Gr
 Needs a shader trace to confirm.
 
 ## Corrections
+
+**2026-08-17 — MRT4 is not a colour; the "two translucency systems" reading was wrong.**
+Across two sessions I sampled MRT2/MRT4 across many materials and concluded MRT4 held a
+per-material translucency/transmission *tint* (green foliage, orange hide) with MRT2.B as a
+mutually-exclusive SSS flag. Reading the shader shows MRT4 is **four integer quantities
+hand-packed across four 8-bit channels**, fields straddling channel boundaries, divided by
+255. The vivid per-object "colours" are bit patterns rendered as RGB; (1,1,1,1) on stone
+means all bits set. MRT2's alpha is likewise a packed bitfield, which is why every sampled
+alpha was a discrete integer over 255.
+
+Lesson: pixel sampling can produce a confident, coherent, *wrong* physical story. Thirty
+lines of disassembly beat two sessions of inference. For any G-buffer channel, read the
+shader before theorising about meaning.
 
 **2026-08-15 — G-buffer contact sheets were alpha-composited and misled me.** Every
 G-buffer target stores data in alpha, and on MRT2 that alpha is 0.031 (8/255) across most

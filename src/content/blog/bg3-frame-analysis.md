@@ -274,40 +274,71 @@ party instead of open sand:
 |---|---|---|
 | MRT0 | Encoded normals, 2-channel | **VERIFIED** — B is exactly 0.0 and A exactly 1.0 at every sampled pixel in both captures; only R and G vary, which is why it renders yellow-green |
 | MRT1 | Albedo, with data in alpha | **VERIFIED** as albedo; alpha varies per material (1.00 / 0.85 / 0.96 across character, stone, dirt) but its meaning is unconfirmed |
-| MRT2 | Shading-model / material parameters | **PARTIAL** — G is pinned at 0.498 (127/255) almost everywhere across all three captures, deviating only slightly on a few materials, so it reads as a signed value whose zero is 0.5. R varies with surface (0.95 stone, 0.87 fur, 0.51 skin) like a roughness term. **B is a discrete flag** — see below |
+| MRT2 | Material scalars + packed flags | **VERIFIED** — RGB are three clamped scalars; **alpha is a packed bitfield**. See below |
 | MRT3 | Motion vectors | **VERIFIED** — see below |
-| MRT4 | Per-material colour parameter | **INFERRED** — white (1,1,1,1) on most materials, strongly coloured on a specific subset. See below |
+| MRT4 | Four bit-packed integer quantities | **VERIFIED** — not a colour at all. See below |
 
-### Two translucency systems, flagged in different channels
+### MRT2 and MRT4 are bit-packed, not colours
 
-The cinematic capture puts skin, fur, cloth, metal and stone on screen at close range, and
-that separates MRT2 and MRT4 in a way one scene never could:
+I spent two sessions sampling these two buffers and reasoning about what the values might
+mean. That was the wrong approach, and it produced a wrong answer: I concluded MRT4 held a
+per-material *colour* — a translucency tint — because it renders as vivid flat colours per
+object, green on foliage, orange on the worg's hide.
 
-| Material | MRT2.B | MRT4 |
-|---|---|---|
-| Human skin | **0.400** | white |
-| Worg fur | **0.400** | white |
-| Worg bare hide | 0 | **0.97, 0.56, 0.02** |
-| Cloth robe | 0 | **0.87, 0.44, 0.26** |
-| Goblin skin | 0 | white |
-| Metal armour | 0 | white |
-| Stone ground | 0 | white |
+Reading the actual shader settles it. The G-buffer pixel shader ends like this:
 
-`MRT2.B` is not continuous — it is exactly **0.400 (102/255) or zero**. A discrete flag,
-raised on human skin and fur and nothing else in the frame. Meanwhile MRT4 carries a colour
-on precisely the materials where MRT2.B is *not* raised: the worg's bare hide, cloth, and
-(in the Grove capture) foliage — all thin surfaces that transmit light. The two are
-mutually exclusive.
+```
+*_7  = _639;                              <- MRT0
+*_8  = _642;                              <- MRT1
+*_9  = _656;                              <- MRT2
+*_10 = {0.0000, 0.0000, 0.0000, 0.0000};  <- MRT3, literal zero
+*_11 = _573;                              <- MRT4
+```
 
-That reads as **two different translucency models**: a subsurface-scattering path flagged in
-MRT2.B for skin and fur, and a thin-surface transmission tint in MRT4 for hide, cloth and
-leaves. White in MRT4 is most likely the cleared value on materials that never write it.
+**MRT2's alpha is a packed bitfield:**
 
-This also explains why the tile classifier needs fourteen combinations. These are exactly
-the "shading models" it sorts tiles by.
+```
+_646 = Select(_630, 1, 0)     <- a boolean flag
+_647 = _646 << 3              <- placed at bit 3   (value 8)
+_650 = _627 & 7               <- a 3-bit id, 0-7
+_651 = _650 << 4              <- placed at bits 4-6 (16 / 32 / 64)
+_653 = _649 | _651
+_655 = ConvertUToF(_653) * 0.0039        <- integer, divided by 255
+```
 
-> INFERRED: the two-system reading fits every material sampled across three captures, but
-> I have not traced the writes in a shader to confirm it.
+RGB are three separate `clamp(x, 0, 1)` scalars, but alpha is an **integer built from a
+flag and a 3-bit id, then normalised into the 8-bit channel**. That is why every alpha
+value I sampled across three captures was a discrete number — 8/255, 21/255, 51/255,
+69/255. They were never continuous quantities; they are packed integers.
+
+**MRT4 is denser still — four quantities across four channels:**
+
+```
+_559 = _558 mod 256            <- low 8 bits of A
+_561 = floor(_558 / 256)       <- high bits of A
+_563 = _562 mod 32             <- low 5 bits of B
+_564 = _563 * 8 + _561         <- B's low 5 bits, then A's high 3
+_567 = _548 mod 4              <- low 2 bits of C
+_568 = _567 * 64 + _566        <- C's low 2 bits, then B's high 6
+_571 = _557 * 4 + _570         <- D, then C's high 2
+_573 = {_559, _564, _568, _571} * 0.0039
+```
+
+Four values, hand-packed with fields **straddling channel boundaries**, then divided by 255
+into an RGBA8 target. Nothing in MRT4 is a colour. The striking per-object colours are bit
+patterns being displayed as RGB, and (1,1,1,1) on stone and metal simply means every bit
+happened to be set.
+
+The lesson is worth stating plainly: **a G-buffer channel is a place to put bits, not
+necessarily a picture.** Two sessions of careful pixel sampling produced a confident and
+wrong physical story, and thirty lines of disassembly replaced it with the truth.
+
+MRT3 being a literal `{0,0,0,0}` here is also the direct explanation for the empty motion
+buffer in the beach frame — this shader draws static geometry and hard-codes zero velocity.
+
+> Caveat: this is one G-buffer shader variant, used for static scene geometry. Skinned and
+> skin/fur materials use different shaders and may pack different fields. What is
+> established is the *structure* — packed integer data — not the meaning of every field.
 
 ### MRT3 is confirmed motion vectors
 
