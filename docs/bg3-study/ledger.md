@@ -39,15 +39,15 @@ analysis. Every claim in the post should be traceable to a row here.
 | 11 | **SSAO** | 5574–5632 | **VERIFIED** | 19 draws @ 1280×720, 4 attachments. **Shader (EID 5590):** `Output float*` — single scalar (hence flat red); 3 sampled 2D images; bounded sampling loop with `Dot(_145,_145)` squared distance and `Dot(_157,_228)` normal·direction = screen-space ambient occlusion at half res | — |
 | 11a | **Sky / atmosphere** | 4540–4581 | **PARTIAL** | **256×128×32** volume (classic atmospheric-scattering LUT dims) read at EID 4549 (1 fullscreen draw = sky), 4564 (dispatch writing a 64×64×128 volume), **all 14 lighting dispatches** 12031–12096, and transparents 12197–12212 — i.e. aerial perspective folded into every shading variation. Sky shader not traced; cloud coverage map not located |
 | 12 | 5 shadow cascades | 5640–11970 | PARTIAL | `rdc snapshot 6000/7000/8500/10500/11800` → all depth 2048×2048; draws 153/280/375/434/81. Projections not extracted | `12-shadow-cascade` |
-| 13 | Shadow mask resolve | 11982–11990 | INFERRED | `rdc rt 11990` red/black mask matching scene shadows | `13-shadow-mask` |
+| 13 | **Shadow mask resolve** | 11982–11990 | **VERIFIED** | Shader has 4× **`ImageSampleDrefExplicitLod`** (hardware depth-comparison = shadow lookup) + **13× `Image<float,2DArray>`** (cascades are **array slices of one texture**) + 24× FClamp (cascade blending) | `13-shadow-mask` |
 | 14 | **Tile-classified clustered lighting** | 11998–12119 | **VERIFIED** | 14 `DispatchIndirect` = 14 documented shader variations. Group counts 55098/0/511/0/42/0/0/1222/690/6/31/0/0/0 **sum to 57600 = 320×180 tiles at 8×8 px on 2560×1440**. All lighting dispatches `LocalSize(8,8,1)` = one tile per workgroup. 11998 is `LocalSize(1,1,1)` indirect-args setup; 12004/12009/12016 are `LocalSize(8,8,1)` classification pre-passes. 38 vs 42 bound resources at 12031 vs 12066 confirms distinct variations | — |
-| 15 | Lighting composite | 12126–12144 | INFERRED | `rdc rt 12144` first lit image | — |
+| 15 | Lighting composite | 12126–12144 | **PARTIAL** | Two near-identical fullscreen shaders (1518/1514 lines) differing by **exactly one binding** (set1 b7). Each declares **84 `Image<float,2D>`**, ~52 samples, **zero loops** = fully unrolled gather. Which of the 84 inputs is which: unknown | — |
 | 16 | **Transparents / VFX** | 12168–12550 | **VERIFIED** | The 285×160×128 fog volume is read at 12179/12188/12197/12202/12207 … 12528/12536/12545/12550 — throughout the pass, draw after draw. Matches talk: particles lit by sampling the fog's **in-scatter luminance** = "free VFX lighting approximation" | — |
 | 17a | **Fade blending compute** | 12566 | **VERIFIED** | `rdc snapshot 12566` → `LocalSize(16,16,1)`; set1 b0 `Image<float,2D>` (lit scene), b1 `Image<uint,2D>` (stencil), b2 `StorageImage<float,2D>` (out). Body: 16×16 tile origin, groupshared uint + float4 caches with +16 halo, bounded `< 4` neighbourhood loop. Matches GPC "Fade Blending pass: compute during post processing, input lit scene + stencil, 4×4 neighbourhood" | — |
 | 17b | Exposure/bloom/tonemap | 12572–12702 | PARTIAL | `rdc bindings 12576` → 1 RO texture + 2 RW SSBOs (histogram shape). 12572 unidentified. Bloom/tonemap split unconfirmed | `17-post-chain` |
 | 18 | Upsample + composite | 12709 | **PARTIAL** | `LocalSize(64,1,1)`, dispatch `(160,90,1)` = the same 16×16 tile grid as decals. Inputs **2560×1440 + 320×180** (exactly ⅛ res), output 2560×1440 → upsample-and-composite. Which effect is unconfirmed; bloom most likely given position after tonemap | — |
-| 19 | UI atlas | 12835–12916 | INFERRED | Same 8192² target as §3, 12 quad draws | — |
-| 20 | HUD | 12921–13412 | INFERRED | 109 draws, `rdc rt 13412` shows HUD | — |
+| 19 | **Blur pyramid** | 12835–12916 | **VERIFIED** | **NOT the 8192² atlas.** RTs form 1280×720 → 672×392 → 352×212 → 672×392 → 1280×720. Shader = 4 UV inputs, 4 samples of one texture, `* 0.25` — a **4-tap box filter** down then up a pyramid with alpha blending. Late bloom or UI backdrop blur (consumer not traced) | — |
+| 20 | **UI / HUD** | 12921–13412 | **VERIFIED** | 109 draws; shader is 49 lines, 3 resources, **1 texture sample** — textured alpha-blended quads | — |
 | 21 | Present | 13420–13441 | **PARTIAL** | 1 compute dispatch (1 RO tex → 1 RW tex) then a 1-draw pass. `rdc rt 13441` = finished image with HUD. The dispatch's exact role unconfirmed | `00-final-frame` |
 
 ## Texture inventory (capture 1)
@@ -270,6 +270,14 @@ fur) versus a thin-surface transmission tint (hide, cloth, and foliage in the Gr
 Needs a shader trace to confirm.
 
 ## Corrections
+
+**2026-08-17 — `rdc stats` merged two unrelated systems.** The 12 draws at EID 12835–12916
+were recorded as writing into the 8192² atlas, because `rdc stats` grouped render passes by
+load-op signature and printed **one representative RT size per group**. Their actual targets
+are 1280×720 down to 352×212 — a blur pyramid. **Never take an RT size from a stats grouping;
+query the pass.** The same aggregation reported 8192×8192 for capture 1 and 1280×720 for
+capture 2 for the "same" group, which was the clue that went un-followed for several
+sessions.
 
 **2026-08-17 — the two-attachment pass is velocity, not emissive.** Read as a second
 emissive pass because it re-renders the same meshes as the prepass/G-buffer and its output

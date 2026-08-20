@@ -142,9 +142,12 @@ geometry cost is set by what a light can see, not by the resolution you store it
 
 **Status: PARTIAL**  ·  EID 333–340
 
-One draw into an **8192×8192** target, with twelve more arriving late in the frame
-(EID 12835–12916) — 109 triangles across 13 draws in total. Quad-sized geometry into a very
-large surface.
+One draw into an **8192×8192** target.
+
+(An earlier version of this section counted twelve more draws at EID 12835–12916 as part of
+the same group. They are not — they are a blur pyramid at 1280×720 and below, covered
+further down. `rdc stats` had grouped them together and reported one representative target
+size for the whole group.)
 
 I originally guessed this was a glyph or UI atlas, on the strength of its size and the
 position of the later draws near the HUD. The capture says otherwise. There is exactly one
@@ -156,9 +159,9 @@ It also lines up with the size Larian give for the shadow atlas: **8K on High**.
 first of these draws lands at EID 333, immediately after the shadow atlas pass at 148–330
 finishes — the shape of a rendered tile being blitted into the atlas proper.
 
-> INFERRED: the format and timing both point at the shadow atlas, but I have not traced
-> what the 12 late draws at EID 12835–12916 are doing, and writing to a shadow atlas that
-> late in the frame is odd unless it is preparation for the next one.
+> INFERRED: the format and timing both point at the shadow atlas. With the late draws now
+> known to belong elsewhere, the oddity of writing to a shadow atlas near the HUD
+> disappears — this is a single early draw, exactly where an atlas write belongs.
 
 Worth a footnote: the largest texture in the capture is **32688 × 26352**, `BC3_UNORM`,
 861 megapixels of compressed data. Non-power-of-two at that scale is the signature of a
@@ -527,12 +530,24 @@ instanced terrain draws of 14, 11 and 10 patches respectively. See **Terrain** b
 
 ## Shadow Mask Resolve
 
-**Status: INFERRED**  ·  EID 11982–11990
+**Status: VERIFIED**  ·  EID 11982–11990
 
 ![Screen-space shadow mask](/img/blog/bg3/13-shadow-mask.png)
 *Red where lit, black where shadowed — the cascades resolved into screen space.*
 
-> TODO: confirm the resolve shader and how the cascades are selected per pixel.
+The shader settles what this is. It contains four **`ImageSampleDrefExplicitLod`**
+instructions — depth-*comparison* samples, the hardware shadow-lookup instruction that
+compares a stored depth against a reference and returns a filtered occlusion result rather
+than a colour. Nothing but shadow sampling uses `Dref`.
+
+It also declares **thirteen `Image<float, 2DArray>`** textures. That's a structural detail
+worth having: the cascades are **array slices of a single texture**, not five separate
+shadow maps, which is what lets one shader index whichever cascade a pixel falls into.
+Twenty-four `FClamp` operations do the rest — clamping and blending cascade contributions
+so the transitions between them don't show as hard bands.
+
+The output is a screen-space mask: sun visibility per pixel, resolved once, then read by
+the lighting rather than each light re-sampling the cascades.
 
 ## Tile-Classified Clustered Lighting
 
@@ -598,11 +613,22 @@ knows about the one model it needs.
 
 ## Lighting Composite
 
-**Status: INFERRED**  ·  EID 12126–12144
+**Status: PARTIAL**  ·  EID 12126–12144
 
-The first fully lit image of the frame appears here.
+Two consecutive single-draw fullscreen passes, and the first fully lit image of the frame
+appears at the end of them.
 
-> TODO: not yet investigated in detail.
+They run near-identical shaders — 1,518 and 1,514 lines — and diffing their bindings shows
+they differ by **exactly one texture**, `DescriptorSet(1), Binding(7)`. Two variants of one
+composite, one of which needs an extra input.
+
+The scale is the striking part. Each declares **84 sampled 2D images** and performs about
+**52 texture samples**, with **no loops at all** — entirely unrolled. That is a gather:
+G-buffer targets, the shadow mask, ambient occlusion, the fog volume and the rest, combined
+in one pass rather than accumulated over many.
+
+> INFERRED: the "big gather" reading follows from the binding count and sample count. I have
+> not identified which of the 84 inputs is which, so the exact composition is unconfirmed.
 
 ## Volumetric Fog
 
@@ -707,21 +733,58 @@ half/quarter-res effect gets folded back into the full-resolution image.
 > INFERRED: the shape is unambiguous but which effect is being composited is not. Bloom is
 > the most likely candidate given its position after the tonemap chain.
 
-## UI Atlas Updates
+## A Blur Pyramid
 
-**Status: INFERRED**  ·  EID 12835–12916
+**Status: VERIFIED**  ·  EID 12835–12916
 
-Twelve quad draws into the 8192² target from section 3.
+I had these twelve draws filed as "UI atlas updates", writing into the 8192² target. Both
+halves of that were wrong, and the way it went wrong is worth recording.
 
-> TODO: confirm contents.
+Their render targets form a pyramid:
+
+```
+1280x720  ->  672x392  ->  352x212  ->  672x392  ->  1280x720
+```
+
+Down, down, then back up. And the shader is twelve lines of arithmetic:
+
+```
+_30 = sample(uv0)
+_32 = sample(uv1)
+_35 = sample(uv2)
+_38 = sample(uv3)
+_39 = _30 + _32 + _35 + _38
+_40 = _39 * 0.2500        <- average of four taps
+```
+
+Four UVs supplied as vertex inputs, four samples of the same texture, averaged. A **4-tap
+box filter**, applied down a resolution pyramid and then back up it with alpha blending —
+the standard construction for a wide, cheap blur.
+
+**Nothing here touches the 8192² texture.** The mistake came from `rdc stats`, which groups
+render passes by their load-op signature and reports a single representative target size
+for each group. These passes and the shadow-atlas pass share a signature, so the tool
+displayed one size — 8192×8192 — for a group containing targets from 1280×720 downward. A
+summary view had silently merged two unrelated systems.
+
+> INFERRED: a down-then-up blur pyramid immediately before the HUD is either a late bloom
+> or a blurred backdrop for translucent UI panels. I have not traced which pass consumes
+> the result.
 
 ## UI
 
-**Status: INFERRED**  ·  EID 12921–13412
+**Status: VERIFIED**  ·  EID 12921–13412
 
-109 draws composing the hotbar, portrait and minimap.
+109 draws composing the hotbar, portrait and minimap. After everything else in this frame,
+the shaders are almost startlingly plain — 49 lines, three bound resources, and a **single
+texture sample**:
 
-> TODO: not yet investigated in detail.
+```
+Output float4* _3 : [[Location(0)]];
+```
+
+Textured quads with alpha blending. The most complex renderer in the frame ends by drawing
+rectangles.
 
 ## Present
 
