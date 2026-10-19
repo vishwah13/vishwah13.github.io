@@ -30,7 +30,10 @@ const baseUrl = import.meta.env.BASE_URL
     <div class="resume-content">
       <h2>Experience</h2>
 
-      <h3>AR VR Developer - Indus Trust (Full-time) - March 2025 - Present</h3>
+      <h3>Programmer - Sumo India (Full-time) - September 2026 - Present</h3>
+      <p>Game programming at Sumo Digital's India studio.</p>
+
+      <h3>AR VR Developer - Indus Trust (Full-time) - March 2025 - May 2026</h3>
       <p>Research and development of Augmented Reality and Virtual Reality application for the educational environment.</p>
 
       <h3>C++ Developer - Microfacet.io (Volunteering, Non-Profit) - April 2025 - December 2025</h3>
