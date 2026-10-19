@@ -15,8 +15,7 @@ const baseUrl = import.meta.env.BASE_URL
         <p>Check out the <a href="https://github.com/vishwah13/Agni">game engine</a> I have been making</p>
 
         <p>
-          I'm currently working as a Programmer at Sumo India. Before that, I was an
-          AR/VR Developer at Indus Trust. You can reach me at
+          I'm currently working as a Programmer at Sumo India. You can reach me at
           <a href="mailto:vishwahsivagurunathan@gmail.com">vishwahsivagurunathan@gmail.com</a>
           or <RouterLink to="/contact">through here</RouterLink>.
         </p>
